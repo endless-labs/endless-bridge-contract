@@ -1,0 +1,16 @@
+[package]
+name = "bridge-core"
+version = "0.1.10"
+authors = []
+
+[addresses]
+bridge_core = "_"
+
+[dev-addresses]
+bridge_core = "_"
+
+[dependencies]
+EndlessFramework = { git = "https://github.com/endless-labs/endless-move-framework", rev = "main", subdir = "endless-framework" }
+EndlessToken = { git = "https://github.com/endless-labs/endless-move-framework", rev = "main", subdir = "endless-token" }
+
+[dev-dependencies]
