@@ -71,6 +71,15 @@ contract Pool is Comn {
     }
 
     /**
+     * @dev Modifier that restricts a function to be called only by the executor.
+     * Throws an error if the caller is not the executor.
+     */
+    modifier onlyFundManager() {
+        require(ManagerAddr == msg.sender, "Must manager");
+        _;
+    }
+
+    /**
      * @dev Sets the minimum and maximum stake amounts for a token.
      * Only the administrator can call this function.
      * @param token The address of the token for which the stake amount limits are to be set.
@@ -464,7 +473,7 @@ contract Pool is Comn {
      * @param token The address of the token.
      * @param amount The amount of tokens to be sent.
      */
-    function sendTokenFee(address token, uint amount) public onlyExecutor {
+    function sendTokenFee(address token, uint amount) public onlyFundManager {
         // Check if the pool for the given token exists.
         require(poolMap[token].token != address(0), "pool not found");
 
