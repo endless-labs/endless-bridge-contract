@@ -286,20 +286,27 @@ module bridge_token::execute {
                 all_amount
             );
             burn(source_token, all_amount);
+            transfer_to_pool(
+                sender,
+                eds_token_address,
+                tokens,
+                amounts,
+                fee_types
+            );
         } else if (islp(mint_type)) {
             vector::push_back(&mut tokens, source_token);
             vector::push_back(&mut amounts, all_amount);
             vector::push_back(&mut fee_types, 0);
+            transfer_to_pool(
+                sender,
+                source_token,
+                tokens,
+                amounts,
+                fee_types
+            );
         } else {
             assert!(false, error::not_found(ECODE_MINT_TYPE_DOES_NOT_EXIST));
         };
-        transfer_to_pool(
-            sender,
-            source_token,
-            tokens,
-            amounts,
-            fee_types
-        );
 
         send_message_v2(
             sender,

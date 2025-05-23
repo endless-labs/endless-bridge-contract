@@ -71,8 +71,8 @@ contract Pool is Comn {
     }
 
     /**
-     * @dev Modifier that restricts a function to be called only by the executor.
-     * Throws an error if the caller is not the executor.
+     * @dev Modifier that restricts a function to be called only by the fund_manager.
+     * Throws an error if the caller is not the fund_manager.
      */
     modifier onlyFundManager() {
         require(ManagerAddr == msg.sender, "Must manager");

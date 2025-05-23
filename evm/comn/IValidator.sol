@@ -3,11 +3,11 @@ pragma solidity ^0.8.20;
 
 interface IValidator {
     function batch_add_validators(
-        bytes32[] memory signer_pk,
+        address[] memory signer_pk,
         uint threshold
     ) external;
 
-    function batch_delete_validators(bytes32[] memory signer_pk) external returns (uint);
+    function batch_delete_validators(address[] memory signer_pk) external returns (uint);
 
     function set_min_verify_threshold(uint v) external;
 

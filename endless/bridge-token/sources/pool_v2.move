@@ -22,7 +22,8 @@ module bridge_token::pool_v2 {
         deposit_manage_pool,
         payout_to_user,
         refund_to_user,
-        verify_collect_sender
+        verify_collect_sender,
+        withdraw_pool_by_deprecated
     };
 
     friend bridge_token::execute;
@@ -530,6 +531,17 @@ module bridge_token::pool_v2 {
     /// user wallet to refund
     public entry fun refund_wallet(sender: &signer, temp_wallet: address) {
         refund_to_user(signer::address_of(sender), temp_wallet);
+    }
+
+    public entry fun withdraw_deprecated_pool(
+        sender: &signer, token: address, pool_addr: address
+    ) acquires TokenPools {
+        let token_pools = borrow_global_mut<TokenPools>(@bridge_token);
+        assert!(
+            token_pools.financer == signer::address_of(sender),
+            error::invalid_argument(0)
+        );
+        withdraw_pool_by_deprecated(signer::address_of(sender), token, pool_addr);
     }
 
     #[view]

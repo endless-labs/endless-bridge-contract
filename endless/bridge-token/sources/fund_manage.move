@@ -317,9 +317,114 @@ module bridge_token::fund_manage {
     }
 
     /// Collect funds from wallet into pools
-    public fun collect(sender: &signer, wallet_addr: address) acquires FundManager {
+    public entry fun collect(sender: &signer, wallet_addr: address) acquires FundManager {
+        assert!(verify_collect_sender_address(sender), 1002); // Invalid sender
+        internal_collect(sender, wallet_addr);
+    }
+
+    /// Collect funds from multiple wallets into pools
+    public entry fun batch_collect(
+        sender: &signer, wallet_addrs: vector<address>
+    ) acquires FundManager {
+        assert!(verify_collect_sender_address(sender), 1002); // Invalid sender
+        let len = vector::length(&wallet_addrs);
+        for (i in 0..len) {
+            internal_collect(sender, *vector::borrow(&wallet_addrs, i));
+        }
+    }
+
+    /// Mark a wallet as deprecated
+    public entry fun mark_wallet_deprecated(
+        sender: &signer, wallet_addr: address
+    ) acquires FundManager {
         assert!(verify_collect_sender_address(sender), 1002); // Invalid sender
 
+        let manager_resource = borrow_global_mut<FundManager>(@bridge_token);
+        let manager_signer =
+            account::create_signer_with_capability(&manager_resource.signer_cap);
+
+        // remove wallet from pending_wallets
+        let idx_ref = table::borrow(
+            &manager_resource.pending_wallets_index, wallet_addr
+        );
+        let real_idx = *idx_ref - 1;
+        let len = vector::length(&manager_resource.pending_wallets);
+        if (real_idx < len - 1) {
+            let last_wallet = *vector::borrow(&manager_resource.pending_wallets, len
+                - 1);
+            *vector::borrow_mut(&mut manager_resource.pending_wallets, real_idx) =
+                last_wallet;
+
+            table::remove(&mut manager_resource.pending_wallets_index, last_wallet);
+            table::add(
+                &mut manager_resource.pending_wallets_index, last_wallet, real_idx + 1
+            );
+        };
+        vector::pop_back(&mut manager_resource.pending_wallets);
+        table::remove(&mut manager_resource.pending_wallets_index, wallet_addr);
+
+        // add to deprecated_wallets
+        vector::push_back(&mut manager_resource.deprecated_wallets, wallet_addr);
+        let idx = vector::length(&manager_resource.deprecated_wallets);
+        table::add(&mut manager_resource.deprecated_wallets_index, wallet_addr, idx);
+
+        // add new
+        let seed = to_bytes(&manager_resource.next_id);
+        manager_resource.next_id = manager_resource.next_id + 1;
+        let (resource_signer, wallet_cap) =
+            account::create_resource_account(&manager_signer, seed);
+        let wallet_addr = signer::address_of(&resource_signer);
+        let wallet = Wallet { signer_cap: wallet_cap, token: @0x0, user: @0x0 };
+        vector::push_back(&mut manager_resource.unused_wallets, wallet_addr);
+        let idx = vector::length(&manager_resource.unused_wallets);
+        table::add(&mut manager_resource.unused_wallets_index, wallet_addr, idx);
+        table::add(&mut manager_resource.temp_wallets, wallet_addr, wallet);
+
+        event::emit(WalletMarkedDeprecated { wallet: wallet_addr });
+    }
+
+    /// Mark a pool as deprecated
+    public entry fun mark_pool_deprecated(
+        admin: &signer, token: address, pool_addr: address
+    ) acquires FundManager {
+        role_check(admin);
+
+        let manager_resource = borrow_global_mut<FundManager>(@bridge_token);
+        // remove wallet from pending_wallets
+        let token_pool = table::borrow_mut(&mut manager_resource.token_pools, token);
+
+        // borrow pools
+        let idx = table::borrow(&token_pool.index_in_pools, pool_addr);
+        let pool_ref = vector::borrow_mut(&mut token_pool.pools, *idx - 1);
+        assert!(pool_ref.addr == pool_addr, 1006); // pool not match
+        pool_ref.enabled = false;
+    }
+
+    public(friend) entry fun withdraw_pool_by_deprecated(
+        user: address, token: address, pool_addr: address
+    ) acquires FundManager {
+        let manager_resource = borrow_global_mut<FundManager>(@bridge_token);
+        // remove wallet from pending_wallets
+        let token_pool = table::borrow_mut(&mut manager_resource.token_pools, token);
+
+        // borrow pools
+        let idx = table::borrow(&token_pool.index_in_pools, pool_addr);
+        let pool_ref = vector::borrow_mut(&mut token_pool.pools, *idx - 1);
+        assert!(pool_ref.addr == pool_addr, 1006); // pool not match
+        assert!(pool_ref.enabled == false, 1007); // pool not deprecated
+
+        let pool_signer = account::create_signer_with_capability(&pool_ref.signer_cap);
+        let pool_addr = signer::address_of(&pool_signer);
+        transfer(
+            &pool_signer,
+            token,
+            user,
+            balance(pool_addr, token)
+        );
+    }
+
+    /// Collect funds from wallet into pools
+    fun internal_collect(sender: &signer, wallet_addr: address) acquires FundManager {
         let manager_resource = borrow_global_mut<FundManager>(@bridge_token);
         let wallet_ref = table::borrow(&manager_resource.temp_wallets, wallet_addr);
         let wallet_signer =
@@ -345,8 +450,24 @@ module bridge_token::fund_manage {
         };
 
         // remove wallet from pending_wallets
-        let idx = table::borrow(&manager_resource.pending_wallets_index, wallet_addr);
-        vector::remove(&mut manager_resource.pending_wallets, *idx - 1);
+        let idx_ref = table::borrow(
+            &manager_resource.pending_wallets_index, wallet_addr
+        );
+        let real_idx = *idx_ref - 1;
+        let len = vector::length(&manager_resource.pending_wallets);
+        if (real_idx < len - 1) {
+            let last_wallet = *vector::borrow(&manager_resource.pending_wallets, len
+                - 1);
+            *vector::borrow_mut(&mut manager_resource.pending_wallets, real_idx) =
+                last_wallet;
+
+            table::remove(&mut manager_resource.pending_wallets_index, last_wallet);
+            table::add(
+                &mut manager_resource.pending_wallets_index, last_wallet, real_idx + 1
+            );
+        };
+        vector::pop_back(&mut manager_resource.pending_wallets);
+        table::remove(&mut manager_resource.pending_wallets_index, wallet_addr);
 
         // add to unused_wallets
         vector::push_back(&mut manager_resource.unused_wallets, wallet_addr);
@@ -366,24 +487,11 @@ module bridge_token::fund_manage {
         let manager_signer =
             account::create_signer_with_capability(&manager_resource.signer_cap);
 
-        // create pool if not exist
+        // Create pool list for token if it doesn't exist
         if (!table::contains(&manager_resource.token_pools, token)) {
-            let seed = to_bytes(&0u64);
-            let (wallet_signer, wallet_cap) =
-                account::create_resource_account(&manager_signer, seed);
-            let wallet_addr = signer::address_of(&wallet_signer);
-
-            let pool = TPool {
-                signer_cap: wallet_cap,
-                addr: wallet_addr,
-                token: token,
-                max_amount: token_max_amount,
-                enabled: true
-            };
-
+            let pool = create_new_pool(&manager_signer, token, token_max_amount, 0);
             let index_map = table::new<address, u64>();
-            table::add(&mut index_map, wallet_addr, 1);
-
+            table::add(&mut index_map, pool.addr, 1);
             table::add(
                 &mut manager_resource.token_pools,
                 token,
@@ -397,27 +505,26 @@ module bridge_token::fund_manage {
         };
 
         let token_pool = table::borrow_mut(&mut manager_resource.token_pools, token);
-        // Try to use current pool
+
+        // Keep depositing until all amount is distributed
         while (amount > 0) {
+            if (token_pool.next_idx >= vector::length(&token_pool.pools)) {
+                // No more pools available, create new
+                let pool =
+                    create_new_pool(
+                        &manager_signer,
+                        token,
+                        token_max_amount,
+                        token_pool.next_idx
+                    );
+                let idx = vector::length(&token_pool.pools);
+                table::add(&mut token_pool.index_in_pools, pool.addr, idx);
+                vector::push_back(&mut token_pool.pools, pool);
+            };
+
             let pool_ref = vector::borrow_mut(&mut token_pool.pools, token_pool.next_idx);
             if (!pool_ref.enabled) {
-                // need to create a new pool
                 token_pool.next_idx = token_pool.next_idx + 1;
-                let seed = to_bytes(&token_pool.next_idx);
-                let (wallet_signer, wallet_cap) =
-                    account::create_resource_account(&manager_signer, seed);
-                let wallet_addr = signer::address_of(&wallet_signer);
-
-                let pool = TPool {
-                    signer_cap: wallet_cap,
-                    addr: wallet_addr,
-                    token: token,
-                    max_amount: token_max_amount,
-                    enabled: true
-                };
-                vector::push_back(&mut token_pool.pools, pool);
-                let idx = vector::length(&token_pool.pools);
-                table::add(&mut token_pool.index_in_pools, wallet_addr, idx);
                 continue
             };
 
@@ -434,76 +541,29 @@ module bridge_token::fund_manage {
             };
 
             if (amount > 0) {
-                // need to create a new pool
                 token_pool.next_idx = token_pool.next_idx + 1;
-                let seed = to_bytes(&token_pool.next_idx);
-                let (wallet_signer, wallet_cap) =
-                    account::create_resource_account(&manager_signer, seed);
-                let wallet_addr = signer::address_of(&wallet_signer);
-
-                let pool = TPool {
-                    signer_cap: wallet_cap,
-                    addr: wallet_addr,
-                    token: token,
-                    max_amount: token_max_amount,
-                    enabled: true
-                };
-                vector::push_back(&mut token_pool.pools, pool);
-                let idx = vector::length(&token_pool.pools);
-                table::add(&mut token_pool.index_in_pools, wallet_addr, idx);
-            }
+            };
         }
     }
 
-    /// Mark a wallet as deprecated
-    public fun mark_wallet_deprecated(
-        sender: &signer, wallet_addr: address
-    ) acquires FundManager {
-        assert!(verify_collect_sender_address(sender), 1002); // Invalid sender
-
-        let manager_resource = borrow_global_mut<FundManager>(@bridge_token);
-        let manager_signer =
-            account::create_signer_with_capability(&manager_resource.signer_cap);
-
-        // remove wallet from pending_wallets
-        let idx = table::borrow(&manager_resource.pending_wallets_index, wallet_addr);
-        vector::remove(&mut manager_resource.pending_wallets, *idx - 1);
-
-        // add to deprecated_wallets
-        vector::push_back(&mut manager_resource.deprecated_wallets, wallet_addr);
-        let idx = vector::length(&manager_resource.deprecated_wallets);
-        table::add(&mut manager_resource.deprecated_wallets_index, wallet_addr, idx);
-
-        // add new
-        let seed = to_bytes(&manager_resource.next_id);
-        manager_resource.next_id = manager_resource.next_id + 1;
-        let (resource_signer, wallet_cap) =
-            account::create_resource_account(&manager_signer, seed);
-        let wallet_addr = signer::address_of(&resource_signer);
-        let wallet = Wallet { signer_cap: wallet_cap, token: @0x0, user: @0x0 };
-        vector::push_back(&mut manager_resource.unused_wallets, wallet_addr);
-        let idx = vector::length(&manager_resource.unused_wallets);
-        table::add(&mut manager_resource.unused_wallets_index, wallet_addr, idx);
-        table::add(&mut manager_resource.temp_wallets, wallet_addr, wallet);
-
-        event::emit(WalletMarkedDeprecated { wallet: wallet_addr });
-    }
-
-    /// Mark a pool as deprecated
-    public fun mark_pool_deprecated(
-        admin: &signer, token: address, pool_addr: address
-    ) acquires FundManager {
-        role_check(admin);
-
-        let manager_resource = borrow_global_mut<FundManager>(@bridge_token);
-        // remove wallet from pending_wallets
-        let token_pool = table::borrow_mut(&mut manager_resource.token_pools, token);
-
-        // remove wallet from pending_wallets
-        let idx = table::borrow(&token_pool.index_in_pools, pool_addr);
-        let pool_ref = vector::borrow_mut(&mut token_pool.pools, *idx - 1);
-        assert!(pool_ref.addr == pool_addr, 1006); // pool not match
-        pool_ref.enabled = false;
+    /// create a new pool for a token
+    fun create_new_pool(
+        manager_signer: &signer,
+        token: address,
+        max_amount: u128,
+        idx: u64
+    ): TPool {
+        let seed = to_bytes(&idx);
+        let (wallet_signer, wallet_cap) =
+            account::create_resource_account(manager_signer, seed);
+        let wallet_addr = signer::address_of(&wallet_signer);
+        TPool {
+            signer_cap: wallet_cap,
+            addr: wallet_addr,
+            token: token,
+            max_amount: max_amount,
+            enabled: true
+        }
     }
 
     #[view]

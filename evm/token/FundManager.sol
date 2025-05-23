@@ -280,7 +280,6 @@ contract FundManager is Comn {
         Types.TokenPool storage tp = tokenPools[token];
         if (tp.pools.length == 0) {
             createNewPool(token, tp);
-            tp.next_idx = 0; // start from the beginning
         }
 
         uint256 maxNeededPools = 1 + (amount / maxAmount);
@@ -319,8 +318,10 @@ contract FundManager is Comn {
             amounts[count] = assignAmount;
 
             remaining -= assignAmount;
-            count++;
-            idx++;
+            if (remaining > 0) {
+                count++;
+                idx++;
+            }
         }
         tp.next_idx = idx;
     }
@@ -343,7 +344,6 @@ contract FundManager is Comn {
 
         tokenPool.pools.push(newPool);
         tokenPool.indexInPools[clone] = tokenPool.pools.length; // index + 1
-        tokenPool.next_idx += 1;
         emit PoolCreated(clone);
         return tokenPool.pools[tokenPool.pools.length - 1];
     }

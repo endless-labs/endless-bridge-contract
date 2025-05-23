@@ -36,6 +36,10 @@ contract TokenBatch {
                 address to = toAddrs[i];
                 TransferHelper.safeTransferETH(to, amount);
             }
+            uint256 refund = msg.value - total;
+            if (refund > 0) {
+                TransferHelper.safeTransferETH(msg.sender, refund);
+            }
         } else {
             address fromAddr = msg.sender;
             require(
