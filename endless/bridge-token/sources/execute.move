@@ -50,6 +50,7 @@ module bridge_token::execute {
     const EHAS_NO_BRIDGE_CONFIG: u64 = 7;
     /// The amount exceeds the limit
     const EAMOUNT_EXCEEDS_LIMIT: u64 = 8;
+    const EMULTISIG_MUST_NOT_BE_EMPTY: u64 = 9;
 
     struct Chain has store, drop, copy {
         type: u8,
@@ -369,6 +370,8 @@ module bridge_token::execute {
             assert!(
                 signer::address_of(sender) == @bridge_token, EREVERT_FOR_GAS_ESTIMATION
             );
+        } else {
+            assert!(!vector::is_empty(&multisig), EMULTISIG_MUST_NOT_BE_EMPTY);
         };
 
         let accum_pk = get_pubkeys(pks);

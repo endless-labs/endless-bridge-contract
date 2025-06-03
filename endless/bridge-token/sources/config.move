@@ -145,8 +145,7 @@ module bridge_token::config {
 
     inline fun verify_admin(admin: &signer, owner_conf: &OwnerConf) {
         assert!(
-            owner_conf.admin == @bridge_token
-                || owner_conf.admin == signer::address_of(admin)
+            owner_conf.admin == signer::address_of(admin)
                 || signer::address_of(admin) == @bridge_token,
             0
         );
