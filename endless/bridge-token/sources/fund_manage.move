@@ -25,6 +25,7 @@ module bridge_token::fund_manage {
     const EINVALID_LENGTH: u64 = 2;
     const ENOT_FOUND: u64 = 3;
     const EOWNER_NOT_MATCH: u64 = 4;
+    const EINVALID_RECOVERY_ID: u64 = 5;
 
     /// Struct representing a TempWallet equivalent (resource account)
     struct Wallet has key, store {
@@ -154,9 +155,13 @@ module bridge_token::fund_manage {
             );
             let signature = vector::slice(&signature_bytes, 0, 64);
             std::debug::print(&signature);
+            let recovery_byte = *vector::borrow(&signature_bytes, 64);
             let recovery_id =
-                if (*vector::borrow(&signature_bytes, 64) == 27) { 0 }
-                else { 1 };
+                if (recovery_byte == 27) { 0 }
+                else {
+                    assert!(recovery_byte == 28, EINVALID_RECOVERY_ID);
+                    1
+                };
             let ecdsa_signature = ecdsa_signature_from_bytes(signature);
             let recovered = ecdsa_recover(message, recovery_id, &ecdsa_signature);
             let pk = option::borrow(&recovered);
