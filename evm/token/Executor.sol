@@ -50,6 +50,9 @@ contract Executor is Comn {
     // Bridge token signer address.
     address public signer;
     uint public collectFee;
+    uint public totalUploadGasFee;
+    uint public totalBridgeFee;
+    uint public totalCollectFee;
 
     event TokenRelationshipSet(
         uint indexed source_chain_id,
@@ -296,35 +299,35 @@ contract Executor is Comn {
         }
 
         uint bridgeFee = IMessager(MessagerAddr).get_bridge_fee();
-        require(
-            all_value >= upload_gas_fee + bridgeFee + collectFee,
-            "please send enough fee"
-        );
-
-        uint transfer_value = all_value -
-            upload_gas_fee -
-            bridgeFee +
-            collectFee;
-
-        address depositWallet = IFundManager(ManagerAddr)
-            .getAvailableDepositWallet(source_address, msg.sender);
-
         {
-            uint totalFee = upload_gas_fee + bridgeFee;
+            uint totalFee = upload_gas_fee + bridgeFee + collectFee;
+            require(all_value >= totalFee, "please send enough fee");
+            address depositWallet = IFundManager(ManagerAddr)
+                .getAvailableDepositWallet(source_address, msg.sender);
+
             (bool success, ) = payable(depositWallet).call{value: totalFee}("");
             require(success, "Transfer fee failed");
+
+            uint transfer_value = all_value - totalFee;
+            _handleTokenTransfer(
+                source_address,
+                depositWallet,
+                all_amount,
+                transfer_value
+            );
         }
 
-        _handleTokenTransfer(
-            source_address,
-            depositWallet,
-            all_amount,
-            transfer_value
-        );
-
+        // record fee
+        totalUploadGasFee += upload_gas_fee;
+        totalCollectFee += collectFee;
         {
+            // withdraw bridge fee
             if (address(this).balance < bridgeFee) {
-                IPool(PoolAddr).transferBridgeFee(bridgeFee);
+                require(totalBridgeFee >= bridgeFee, "not enough bridge fee");
+                IPool(PoolAddr).withdrawFee(address(this), totalBridgeFee / 2);
+                totalBridgeFee = totalBridgeFee / 2;
+            } else {
+                totalBridgeFee += bridgeFee;
             }
             bytes memory messageBody = abi.encodePacked(
                 source_token,
@@ -357,9 +360,8 @@ contract Executor is Comn {
         if (IPool(PoolAddr).getPoolInfo(source_token).token != address(0)) {
             if (isWToken(source_token)) {
                 require(transfer_value >= all_amount, "not enough value");
-                uint valueToSend = all_amount;
                 (bool success, ) = payable(depositWallet).call{
-                    value: valueToSend
+                    value: all_amount
                 }("");
                 require(success, "Transfer allAmount failed");
             } else {
@@ -721,5 +723,25 @@ contract Executor is Comn {
         if (rs.initialized == 0) {
             revert("source token info is empty");
         }
+    }
+
+    /**
+     * @dev Withdraws the collect fee from the contract. Only the financer can withdraw the fee
+     * @param amount The amount of fee to withdraw.
+     */
+    function withdrawCollectFee(uint amount) external onlyFinancer {
+        require(totalCollectFee >= amount, "not enough collect fee");
+        totalCollectFee -= amount;
+        IPool(PoolAddr).withdrawFee(msg.sender, amount);
+    }
+
+    /**
+     * @dev Withdraws the upload gas fee from the contract. Only the financer can withdraw the fee
+     * @param amount The amount of fee to withdraw.
+     */
+    function withdrawUploadgasFee(uint amount) external onlyFinancer {
+        require(totalUploadGasFee >= amount, "not enough upload gas fee");
+        totalUploadGasFee -= amount;
+        IPool(PoolAddr).withdrawFee(msg.sender, amount);
     }
 }

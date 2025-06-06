@@ -409,6 +409,24 @@ module bridge_token::pool_v2 {
         *total_liquidity = *total_liquidity + refund;
     }
 
+    /// Transfer token from pool
+    public(friend) fun withdraw_bridge_fee(
+        receiver: address, amount: u128
+    ) acquires TokenPools {
+        let eds_token_address = get_eds_token_address();
+        let pool_mapping = &mut borrow_global_mut<TokenPools>(@bridge_token).pool_mapping;
+        assert!(
+            simple_map::contains_key(pool_mapping, &eds_token_address),
+            error::not_found(ETOKEN_NOT_FOUND)
+        );
+
+        let pool = simple_map::borrow_mut(pool_mapping, &eds_token_address);
+        let total_liquidity = &mut pool.total_liquidity;
+        *total_liquidity = *total_liquidity - amount;
+
+        payout_to_user(receiver, eds_token_address, amount);
+    }
+
     /// acc calc reward
     public(friend) fun refresh_rewards(token: address, lp_fee: u128): u128 acquires TokenPools {
         if (lp_fee == 0) {
@@ -511,20 +529,37 @@ module bridge_token::pool_v2 {
             error::invalid_argument(0)
         );
 
+        let eds_token_address = get_eds_token_address();
+        let pool_mapping = &mut token_pools.pool_mapping;
+        assert!(
+            simple_map::contains_key(pool_mapping, &eds_token_address),
+            error::not_found(ETOKEN_NOT_FOUND)
+        );
+
         if (fee_type == FEE_TYPE_PLATFORM) {
             assert!(
                 token_pools.total_platform_fee >= amount,
                 error::invalid_argument(1)
             );
             token_pools.total_platform_fee = token_pools.total_platform_fee - amount;
-            payout_to_user(signer::address_of(sender), get_eds_token_address(), amount);
+
+            // update the liquidity
+            let pool = simple_map::borrow_mut(pool_mapping, &eds_token_address);
+            let total_liquidity = &mut pool.total_liquidity;
+            *total_liquidity = *total_liquidity - amount;
+            payout_to_user(signer::address_of(sender), eds_token_address, amount);
         } else if (fee_type == FEE_TYPE_COLLECT) {
             assert!(
                 token_pools.total_collect_fee >= amount,
                 error::invalid_argument(1)
             );
             token_pools.total_collect_fee = token_pools.total_collect_fee - amount;
-            payout_to_user(signer::address_of(sender), get_eds_token_address(), amount);
+
+            // update the liquidity
+            let pool = simple_map::borrow_mut(pool_mapping, &eds_token_address);
+            let total_liquidity = &mut pool.total_liquidity;
+            *total_liquidity = *total_liquidity - amount;
+            payout_to_user(signer::address_of(sender), eds_token_address, amount);
         };
     }
 

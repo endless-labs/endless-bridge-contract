@@ -20,12 +20,13 @@ module bridge_token::execute {
         islp,
         ismint
     };
-    use bridge_token::token::{mint, burn, transfer};
+    use bridge_token::token::{mint, burn, transfer, balance};
     use bridge_token::pool_v2::{
         transfer_to_pool,
         transfer_from_pool,
         get_lp_fee,
-        refresh_rewards
+        refresh_rewards,
+        withdraw_bridge_fee
     };
     use bridge_token::fund_manage::{get_collect_fee};
     use bridge_core::validator::get_pubkeys;
@@ -265,9 +266,13 @@ module bridge_token::execute {
         let fee_types: vector<u8> = vector::empty();
 
         let platform_fee = get_platform_fee();
-        vector::push_back(&mut tokens, eds_token_address);
-        vector::push_back(&mut amounts, platform_fee);
-        vector::push_back(&mut fee_types, 1);
+        if (balance(execute_signer_address, eds_token_address) < platform_fee) {
+            withdraw_bridge_fee(execute_signer_address, platform_fee);
+        } else {
+            vector::push_back(&mut tokens, eds_token_address);
+            vector::push_back(&mut amounts, platform_fee);
+            vector::push_back(&mut fee_types, 1);
+        };
 
         let collect_fee = get_collect_fee();
         vector::push_back(&mut tokens, eds_token_address);

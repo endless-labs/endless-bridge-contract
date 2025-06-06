@@ -384,19 +384,6 @@ contract Pool is Comn {
     function getLpFee(uint amount) public pure returns (uint) {
         uint pool_fee_all = Math.mulDiv(amount, POOL_FEE, 1000000);
         return pool_fee_all;
-
-        // uint all_cal_amount = poolMap[token].inAmount;
-        // require(
-        //     all_cal_amount > 0,
-        //     "Total pool amount must be greater than zero"
-        // );
-
-        // uint ratio = Math.mulDiv(amount, 1000, all_cal_amount);
-        // if (ratio < 3) {
-        //     return pool_fee_all;
-        // } else {
-        //     return Math.mulDiv(amount, ratio, 1000);
-        // }
     }
 
     /**
@@ -492,10 +479,14 @@ contract Pool is Comn {
         address relay,
         uint amount
     ) public onlyExecutor {
+        require(poolMap[token].inAmount >= amount, "Insufficient inAmount");
+        require(poolMap[token].lockAmount >= amount, "Insufficient lockAmount");
+
         // Decrease the total amount in the pool.
         poolMap[token].inAmount -= amount;
         // Decrease the locked amount in the pool.
         poolMap[token].lockAmount -= amount;
+        
         // Transfer the tokens from the contract to the relay.
         IFundManager manager = IFundManager(ManagerAddr);
         manager.payoutToUser(token, relay, amount);
@@ -503,11 +494,20 @@ contract Pool is Comn {
 
     /**
      * @dev Allows the executor to withdraw the fee from the pool.
+     * @param receiver The address of the receiver.
      * @param amount The amount to be withdrawn.
      */
-    function transferBridgeFee(uint amount) public onlyExecutor {
+    function withdrawFee(address receiver, uint amount) public onlyExecutor {
+        require(poolMap[WTOKEN_ADDRESS].inAmount >= amount, "Insufficient inAmount");
+        require(poolMap[WTOKEN_ADDRESS].lockAmount >= amount, "Insufficient lockAmount");
+
+        // Decrease the total amount in the pool.
+        poolMap[WTOKEN_ADDRESS].inAmount -= amount;
+        // Decrease the locked amount in the pool.
+        poolMap[WTOKEN_ADDRESS].lockAmount -= amount;
+
         IFundManager manager = IFundManager(ManagerAddr);
-        manager.payoutToUser(WTOKEN_ADDRESS, msg.sender, amount);
+        manager.payoutToUser(WTOKEN_ADDRESS, receiver, amount);
     }
 
     /**

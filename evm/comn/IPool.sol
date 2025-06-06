@@ -33,8 +33,6 @@ interface IPool {
     // only withdraw the bonus.
     function withdrawBonusFromPool(address stakeToken, uint amount) external;
 
-    function transferBridgeFee(uint amount) external;
-
     function transferFromPool(
         address destToken,
         address toWho,
@@ -63,7 +61,7 @@ interface IPool {
 
     function sendTokenFee(address token, uint amount) external;
 
-    function withdrawFee(address token, uint amount) external;
+    function withdrawFee(address receiver, uint amount) external;
 
     function transferFeeToRelay(
         address token,
