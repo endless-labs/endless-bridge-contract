@@ -33,11 +33,13 @@ interface IExecutor {
         uint256 maxAmount
     ) external;
 
-    function setPlatformFee(uint _platformFee) external;
-
     function setSigner(address newSigner) external;
 
     function signer() external view returns (address);
+
+    function setCollectFee(uint256 _collectFee) external;
+
+    function collectFee() external view returns (uint256);
 
     function createNewToken(
         string memory name,

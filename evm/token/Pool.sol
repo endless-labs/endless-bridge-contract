@@ -356,6 +356,21 @@ contract Pool is Comn {
         }
     }
 
+    /// @notice Mark a pool as deprecated, allow pool to withdraw
+    function markPoolDeprecated(
+        address token,
+        address wallet
+    ) external onlyAdmin {
+        // Send the tokens to the user.
+        IFundManager manager = IFundManager(ManagerAddr);
+        uint256 amount = manager.markPoolDeprecated(token, wallet);
+
+        // Decrease the total amount in the pool.
+        poolMap[token].inAmount -= amount;
+        // Decrease the locked amount in the pool.
+        poolMap[token].lockAmount -= amount;
+    }
+
     /**
      * @dev Calculates the bonus amount for a user in a given pool.
      * @param user The address of the user.

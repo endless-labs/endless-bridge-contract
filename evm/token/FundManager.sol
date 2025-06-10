@@ -3,6 +3,8 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts@5.0.0/proxy/Clones.sol";
 import {IPool} from "../comn/IPool.sol";
+import {IExecutor} from "../comn/IExecutor.sol";
+import {IMessager} from "../comn/IMessager.sol";
 import {IToken} from "../comn/IToken.sol";
 import {SafeERC20} from "../comn/SafeERC20.sol";
 import {Types} from "../comn/Types.sol";
@@ -143,9 +145,23 @@ contract FundManager is Comn {
     }
 
     /// @notice Collect ETH and tokens from a pending wallet and deposit into the appropriate pool
-    function collect(address wallet) external onlyExecutor {
+    function collect(address wallet, address sender) external onlyExecutor {
         require(isInPending(wallet), "Not pending");
+        //first transfer collectFee to signer
+        uint collectFee = IExecutor(ExecutorAddr).collectFee();
+        if (collectFee > 0) {
+            uint256 totalBalance = wallet.balance;
+            require(
+                totalBalance >= collectFee,
+                "TempWallet insufficient balance"
+            );
+            TempWallet(payable(wallet)).withdrawETH(
+                payable(sender),
+                collectFee
+            );
+        }
 
+        //then transfer remaining balance to pool
         uint256 ethBalance = wallet.balance;
         if (ethBalance > 0) {
             (
@@ -187,8 +203,23 @@ contract FundManager is Comn {
     }
 
     /// @notice Mark a pending wallet as deprecated, allow user to withdraw, and replace it with a new one
-    function markWalletDeprecated(address wallet) external onlyExecutor {
+    function markWalletDeprecated(
+        address wallet,
+        address sender
+    ) external onlyExecutor {
         require(isInPending(wallet), "Only pending wallet");
+        //first transfer collectFee to signer
+        uint collectFee = IExecutor(ExecutorAddr).collectFee();
+        uint bridgeFee = IMessager(MessagerAddr).get_bridge_fee();
+        uint256 totalBalance = wallet.balance;
+        require(
+            totalBalance >= collectFee + bridgeFee,
+            "TempWallet insufficient balance"
+        );
+        TempWallet(payable(wallet)).withdrawETH(
+            payable(sender),
+            collectFee + bridgeFee
+        );
 
         movePendingToDeprecated(wallet);
         emit WalletMarkedDeprecated(wallet);
@@ -348,11 +379,11 @@ contract FundManager is Comn {
         return tokenPool.pools[tokenPool.pools.length - 1];
     }
 
-    /// @notice Mark a pool as deprecated, allow admin to withdraw
+    /// @notice Mark a pool as deprecated, allow pool to withdraw
     function markPoolDeprecated(
         address token,
         address wallet
-    ) external onlyAdmin {
+    ) public onlyPool returns (uint256 available)  {
         Types.TokenPool storage tp = tokenPools[token];
 
         uint index = tp.indexInPools[wallet];
@@ -362,6 +393,9 @@ contract FundManager is Comn {
         Types.TPool storage pool = tp.pools[actualIndex];
         require(pool.addr == wallet, "Wallet not matched");
         pool.enabled = false;
+
+        available = IToken(token).balanceOf(pool.addr);
+        return available;
     }
 
     /// @notice withdraw a pool wallet by deprecated, allow financer to withdraw

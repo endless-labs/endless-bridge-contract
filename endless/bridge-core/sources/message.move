@@ -124,6 +124,21 @@ module bridge_core::message {
         *bridge_fee = new_fee;
     }
 
+    /// withdraw the platform fee
+    public entry fun witdraw_platform_fee(
+        financer: &signer, amount: u128
+    ) acquires MessageInfo, MessageResource {
+        role_check(financer);
+
+        let bridge_fee = &mut borrow_global_mut<MessageInfo>(@bridge_core).bridge_fee;
+        *bridge_fee = *bridge_fee - amount;
+
+        let message_resource = borrow_global<MessageResource>(@bridge_core);
+        let message_signer =
+            account::create_signer_with_capability(&message_resource.signer_cap);
+        endless_coin::transfer(&message_signer, signer::address_of(financer), amount);
+    }
+
     /// Send a message to another chain
     public fun send_message(
         _sender: &signer,

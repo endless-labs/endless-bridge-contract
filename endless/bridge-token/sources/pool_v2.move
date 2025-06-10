@@ -23,7 +23,10 @@ module bridge_token::pool_v2 {
         payout_to_user,
         refund_to_user,
         verify_collect_sender,
-        withdraw_pool_by_deprecated
+        withdraw_pool_by_deprecated,
+        collect,
+        mark_wallet,
+        mark_pool
     };
 
     friend bridge_token::execute;
@@ -48,6 +51,7 @@ module bridge_token::pool_v2 {
     const ETIME_NOT_YET_REACHED: u64 = 12;
     /// Function is deprecated.
     const EDEPRECATED_FUNCTION: u64 = 13;
+    const EWITHDRAW_FEE_TYPE: u64 = 14;
 
     const FEE_TYPE_PLATFORM: u8 = 1;
     const FEE_TYPE_COLLECT: u8 = 2;
@@ -339,7 +343,7 @@ module bridge_token::pool_v2 {
     }
 
     /// Transfer token to pool
-    public fun transfer_to_pool(
+    public(friend) fun transfer_to_pool(
         owner: &signer,
         source_token: address,
         tokens: vector<address>,
@@ -373,10 +377,6 @@ module bridge_token::pool_v2 {
                 token_pools.total_upload_gas_fee =
                     token_pools.total_upload_gas_fee + amount;
             };
-
-            let pool = simple_map::borrow_mut(&mut token_pools.pool_mapping, &token);
-            let total_liquidity = &mut pool.total_liquidity;
-            *total_liquidity = *total_liquidity + amount;
         };
     }
 
@@ -475,6 +475,54 @@ module bridge_token::pool_v2 {
         return pool_fee
     }
 
+     /// Collect funds from multiple wallets into pools
+    public entry fun batch_collect(
+        sender: &signer, wallet_addrs: vector<address>
+    ) acquires TokenPools {
+        let token_pools = borrow_global_mut<TokenPools>(@bridge_token);
+        let eds_token_address = get_eds_token_address();
+
+        let len = vector::length(&wallet_addrs);
+        for (i in 0..len) {
+            let wallet_addr = *vector::borrow(&wallet_addrs, i);
+
+            let (token, token_amount, eds_amount) = collect(
+                sender, wallet_addr
+            );
+
+            let pool = simple_map::borrow_mut(&mut token_pools.pool_mapping, &token);
+            let total_liquidity = &mut pool.total_liquidity;
+            *total_liquidity = *total_liquidity + token_amount;
+
+            if (token != eds_token_address && eds_amount > 0) {
+                let pool =
+                    simple_map::borrow_mut(
+                        &mut token_pools.pool_mapping, &eds_token_address
+                    );
+                let total_liquidity = &mut pool.total_liquidity;
+                *total_liquidity = *total_liquidity + eds_amount;
+            }
+        }
+    }
+
+    /// mark wallet deprecated
+    public entry fun mark_wallet_deprecated(
+        sender: &signer, wallet_addr: address
+    ) {
+        mark_wallet(sender, wallet_addr);
+    }
+
+    /// mark pool deprecated
+    public entry fun mark_pool_deprecated(
+        admin: &signer, token: address, pool_addr: address
+    ) acquires TokenPools {
+        let amount = mark_pool(admin, token, pool_addr);
+        let token_pools = borrow_global_mut<TokenPools>(@bridge_token);
+        let pool = simple_map::borrow_mut(&mut token_pools.pool_mapping, &token);
+        let total_liquidity = &mut pool.total_liquidity;
+        *total_liquidity = *total_liquidity - amount;
+    }
+
     /// acc calc reward to withdrawal
     public entry fun withdrawal(
         owner: &signer, token: address, amount: u128
@@ -520,9 +568,7 @@ module bridge_token::pool_v2 {
     }
 
     /// withdrawal fee
-    public entry fun withdraw_fee(
-        sender: &signer, amount: u128, fee_type: u8
-    ) acquires TokenPools {
+    public entry fun withdraw_uploadgas_fee(sender: &signer, amount: u128) acquires TokenPools {
         let token_pools = borrow_global_mut<TokenPools>(@bridge_token);
         assert!(
             token_pools.financer == signer::address_of(sender),
@@ -536,31 +582,12 @@ module bridge_token::pool_v2 {
             error::not_found(ETOKEN_NOT_FOUND)
         );
 
-        if (fee_type == FEE_TYPE_PLATFORM) {
-            assert!(
-                token_pools.total_platform_fee >= amount,
-                error::invalid_argument(1)
-            );
-            token_pools.total_platform_fee = token_pools.total_platform_fee - amount;
-
-            // update the liquidity
-            let pool = simple_map::borrow_mut(pool_mapping, &eds_token_address);
-            let total_liquidity = &mut pool.total_liquidity;
-            *total_liquidity = *total_liquidity - amount;
-            payout_to_user(signer::address_of(sender), eds_token_address, amount);
-        } else if (fee_type == FEE_TYPE_COLLECT) {
-            assert!(
-                token_pools.total_collect_fee >= amount,
-                error::invalid_argument(1)
-            );
-            token_pools.total_collect_fee = token_pools.total_collect_fee - amount;
-
-            // update the liquidity
-            let pool = simple_map::borrow_mut(pool_mapping, &eds_token_address);
-            let total_liquidity = &mut pool.total_liquidity;
-            *total_liquidity = *total_liquidity - amount;
-            payout_to_user(signer::address_of(sender), eds_token_address, amount);
-        };
+        token_pools.total_upload_gas_fee = token_pools.total_upload_gas_fee - amount;
+        // update the liquidity
+        let pool = simple_map::borrow_mut(pool_mapping, &eds_token_address);
+        let total_liquidity = &mut pool.total_liquidity;
+        *total_liquidity = *total_liquidity - amount;
+        payout_to_user(signer::address_of(sender), eds_token_address, amount);
     }
 
     /// user wallet to refund
@@ -779,6 +806,18 @@ module bridge_token::pool_v2 {
         let pool_mapping = &borrow_global<TokenPools>(@bridge_token).pool_mapping;
 
         simple_map::keys(pool_mapping)
+    }
+
+    #[view]
+    public fun get_financer(): address acquires TokenPools {
+        let financer = borrow_global<TokenPools>(@bridge_token).financer;
+        financer
+    }
+
+    #[view]
+    public fun get_uploadgas_fee(): u128 acquires TokenPools {
+        let token_pools = borrow_global_mut<TokenPools>(@bridge_token);
+        token_pools.total_upload_gas_fee
     }
 
     #[test_only]

@@ -322,32 +322,37 @@ module bridge_token::fund_manage {
     }
 
     /// Collect funds from wallet into pools
-    public entry fun collect(sender: &signer, wallet_addr: address) acquires FundManager {
+    public(friend) fun collect(sender: &signer, wallet_addr: address): (address, u128, u128) acquires FundManager {
         assert!(verify_collect_sender_address(sender), 1002); // Invalid sender
-        internal_collect(sender, wallet_addr);
-    }
-
-    /// Collect funds from multiple wallets into pools
-    public entry fun batch_collect(
-        sender: &signer, wallet_addrs: vector<address>
-    ) acquires FundManager {
-        assert!(verify_collect_sender_address(sender), 1002); // Invalid sender
-        let len = vector::length(&wallet_addrs);
-        for (i in 0..len) {
-            internal_collect(sender, *vector::borrow(&wallet_addrs, i));
-        }
+        return internal_collect(sender, wallet_addr);
     }
 
     /// Mark a wallet as deprecated
-    public entry fun mark_wallet_deprecated(
+    public(friend) fun mark_wallet(
         sender: &signer, wallet_addr: address
     ) acquires FundManager {
         assert!(verify_collect_sender_address(sender), 1002); // Invalid sender
 
         let manager_resource = borrow_global_mut<FundManager>(@bridge_token);
+        let collect_fee = manager_resource.collect_fee;
+        let bridge_fee = get_platform_fee();
+        let collect_sender_address = signer::address_of(sender);
+        let eds_token_address = get_eds_token_address();
+        let wallet_ref = table::borrow(&manager_resource.temp_wallets, wallet_addr);
+        let wallet_signer =
+            account::create_signer_with_capability(&wallet_ref.signer_cap);
+        // first, transfer eds to collect_sender
+        let eds_balance = balance(wallet_addr, eds_token_address);
+        assert!(eds_balance >= collect_fee + bridge_fee, 1004); // TempWallet insufficient balance
+        transfer(
+            &wallet_signer,
+            eds_token_address,
+            collect_sender_address,
+            collect_fee + bridge_fee
+        );
+
         let manager_signer =
             account::create_signer_with_capability(&manager_resource.signer_cap);
-
         // remove wallet from pending_wallets
         let idx_ref = table::borrow(
             &manager_resource.pending_wallets_index, wallet_addr
@@ -389,9 +394,9 @@ module bridge_token::fund_manage {
     }
 
     /// Mark a pool as deprecated
-    public entry fun mark_pool_deprecated(
+    public(friend) fun mark_pool(
         admin: &signer, token: address, pool_addr: address
-    ) acquires FundManager {
+    ): u128 acquires FundManager {
         role_check(admin);
 
         let manager_resource = borrow_global_mut<FundManager>(@bridge_token);
@@ -403,6 +408,9 @@ module bridge_token::fund_manage {
         let pool_ref = vector::borrow_mut(&mut token_pool.pools, *idx - 1);
         assert!(pool_ref.addr == pool_addr, 1006); // pool not match
         pool_ref.enabled = false;
+
+        let available = balance(pool_addr, token);
+        return available
     }
 
     public(friend) entry fun withdraw_pool_by_deprecated(
@@ -429,28 +437,46 @@ module bridge_token::fund_manage {
     }
 
     /// Collect funds from wallet into pools
-    fun internal_collect(sender: &signer, wallet_addr: address) acquires FundManager {
+    fun internal_collect(sender: &signer, wallet_addr: address): (address, u128, u128) acquires FundManager {
         let manager_resource = borrow_global_mut<FundManager>(@bridge_token);
         let wallet_ref = table::borrow(&manager_resource.temp_wallets, wallet_addr);
         let wallet_signer =
             account::create_signer_with_capability(&wallet_ref.signer_cap);
-        let token = wallet_ref.token;
+        
+        let eds_token_address = get_eds_token_address();
+        let collect_fee = manager_resource.collect_fee;
+        if (collect_fee > 0) {
+            let collect_sender_address = signer::address_of(sender);
+            // first, transfer eds to collect_sender
+            let eds_balance = balance(wallet_addr, eds_token_address);
+            assert!(eds_balance >= collect_fee, 1004); // TempWallet insufficient balance
+            transfer(
+                &wallet_signer,
+                eds_token_address,
+                collect_sender_address,
+                collect_fee
+            );
+        };
 
         // transfer funds to pool
+        let token = wallet_ref.token;
+        let token_amount = balance(wallet_addr, token);
         internal_deposit_pool(
             manager_resource,
             &wallet_signer,
             token,
-            balance(wallet_addr, token)
+            token_amount
         );
 
         // transfer eds funds to pool
+        let eds_amount = 0;
         if (token != get_eds_token_address()) {
+            eds_amount = balance(wallet_addr, eds_token_address);
             internal_deposit_pool(
                 manager_resource,
                 &wallet_signer,
                 get_eds_token_address(),
-                balance(wallet_addr, get_eds_token_address())
+                eds_amount
             );
         };
 
@@ -478,6 +504,7 @@ module bridge_token::fund_manage {
         vector::push_back(&mut manager_resource.unused_wallets, wallet_addr);
         let idx = vector::length(&manager_resource.unused_wallets);
         table::add(&mut manager_resource.unused_wallets_index, wallet_addr, idx);
+        (token, token_amount, eds_amount)
     }
 
     /// create or get a pool for a token

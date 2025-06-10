@@ -387,7 +387,7 @@ contract Executor is Comn {
             require(signer == msg.sender, "invalid signer");
         }
         IFundManager manager = IFundManager(ManagerAddr);
-        manager.collect(wallet);
+        manager.collect(wallet, msg.sender);
     }
 
     /**
@@ -400,7 +400,7 @@ contract Executor is Comn {
         }
         for (uint i = 0; i < wallets.length; i++) {
             IFundManager manager = IFundManager(ManagerAddr);
-            manager.collect(wallets[i]);
+            manager.collect(wallets[i], msg.sender);
         }
     }
 
@@ -413,7 +413,7 @@ contract Executor is Comn {
             require(signer == msg.sender, "invalid signer");
         }
         IFundManager manager = IFundManager(ManagerAddr);
-        manager.markWalletDeprecated(wallet);
+        manager.markWalletDeprecated(wallet, msg.sender);
     }
 
     /**
@@ -723,16 +723,6 @@ contract Executor is Comn {
         if (rs.initialized == 0) {
             revert("source token info is empty");
         }
-    }
-
-    /**
-     * @dev Withdraws the collect fee from the contract. Only the financer can withdraw the fee
-     * @param amount The amount of fee to withdraw.
-     */
-    function withdrawCollectFee(uint amount) external onlyFinancer {
-        require(totalCollectFee >= amount, "not enough collect fee");
-        totalCollectFee -= amount;
-        IPool(PoolAddr).withdrawFee(msg.sender, amount);
     }
 
     /**
