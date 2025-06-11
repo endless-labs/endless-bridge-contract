@@ -38,7 +38,7 @@ contract ProxyMY is Proxy {
         } else {
             Address.functionStaticCall(
                 StorageSlot.getAddressSlot(_ADMIN_SLOT).value,
-                abi.encodeWithSignature("mustMuster(address)", msg.sender)
+                abi.encodeWithSignature("mustMaster(address)", msg.sender)
             );
             _setImplementation(_logic);
         }

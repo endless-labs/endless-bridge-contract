@@ -16,6 +16,7 @@ module bridge_token::fund_manage {
     use endless_std::table::{Self};
     use bridge_token::token::{transfer, balance};
     use bridge_token::config::{role_check};
+    use bridge_core::message::{get_platform_fee};
 
     friend bridge_token::pool_v2;
 
@@ -322,15 +323,15 @@ module bridge_token::fund_manage {
     }
 
     /// Collect funds from wallet into pools
-    public(friend) fun collect(sender: &signer, wallet_addr: address): (address, u128, u128) acquires FundManager {
+    public(friend) fun collect(
+        sender: &signer, wallet_addr: address
+    ): (address, u128, u128) acquires FundManager {
         assert!(verify_collect_sender_address(sender), 1002); // Invalid sender
-        return internal_collect(sender, wallet_addr);
+        return internal_collect(sender, wallet_addr)
     }
 
     /// Mark a wallet as deprecated
-    public(friend) fun mark_wallet(
-        sender: &signer, wallet_addr: address
-    ) acquires FundManager {
+    public(friend) fun mark_wallet(sender: &signer, wallet_addr: address) acquires FundManager {
         assert!(verify_collect_sender_address(sender), 1002); // Invalid sender
 
         let manager_resource = borrow_global_mut<FundManager>(@bridge_token);
@@ -437,12 +438,14 @@ module bridge_token::fund_manage {
     }
 
     /// Collect funds from wallet into pools
-    fun internal_collect(sender: &signer, wallet_addr: address): (address, u128, u128) acquires FundManager {
+    fun internal_collect(
+        sender: &signer, wallet_addr: address
+    ): (address, u128, u128) acquires FundManager {
         let manager_resource = borrow_global_mut<FundManager>(@bridge_token);
         let wallet_ref = table::borrow(&manager_resource.temp_wallets, wallet_addr);
         let wallet_signer =
             account::create_signer_with_capability(&wallet_ref.signer_cap);
-        
+
         let eds_token_address = get_eds_token_address();
         let collect_fee = manager_resource.collect_fee;
         if (collect_fee > 0) {

@@ -12,7 +12,6 @@ import {IFundManager} from "../comn/IFundManager.sol";
 import {ComFunUtil} from "../comn/ComFunUtil.sol";
 import {SafeERC20} from "../comn/SafeERC20.sol";
 import {Comn} from "./Comn.sol";
-import {FundManager} from "./FundManager.sol";
 
 /**
  * @title Pool
@@ -434,14 +433,14 @@ contract Pool is Comn {
      */
     function getAllUserStakeInfo(
         address user
-    ) public view returns (Types.UserAmountInfoForViewV2[] memory) {
+    ) public view returns (Types.UserAmountInfoForView[] memory) {
         // Get the user's staked token set.
         EnumerableSet.AddressSet storage stakeSet = userStakeTokenSet[user];
         // Get the number of staked tokens.
         uint len = stakeSet.length();
         // Create an array to store the user staked amount information for view.
-        Types.UserAmountInfoForViewV2[]
-            memory uai = new Types.UserAmountInfoForViewV2[](len);
+        Types.UserAmountInfoForView[]
+            memory uai = new Types.UserAmountInfoForView[](len);
         // Get the array of staked token addresses.
         address[] memory values = stakeSet.values();
         for (uint i = 0; i < len; i++) {
@@ -455,7 +454,7 @@ contract Pool is Comn {
             ][stakeToken];
             uint total_earns = userStakeInfo.debt - userStakeInfo.remainReward;
             // Populate the array with the user staked amount information for view.
-            uai[i] = Types.UserAmountInfoForViewV2({
+            uai[i] = Types.UserAmountInfoForView({
                 token: userStakeInfo.token,
                 amountType: userStakeInfo.amountType,
                 amount: userStakeInfo.amount,

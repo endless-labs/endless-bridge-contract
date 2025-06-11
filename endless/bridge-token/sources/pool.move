@@ -378,7 +378,7 @@ module bridge_token::pool {
 
     /// acc calc reward to withdrawal
     public entry fun withdrawFee(
-        admin: &signer, token: address, amount: u128
+        admin: &signer, _token: address, _amount: u128
     ) {
         // Only admin can initialize new pool
         role_check(admin);

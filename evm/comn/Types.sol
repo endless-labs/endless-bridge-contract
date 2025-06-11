@@ -162,8 +162,8 @@ library Types {
 
     struct TokenPool {
         TPool[] pools;
-        uint64 next_idx;
-        uint64 used_idx;
+        uint256 next_idx;
+        uint256 used_idx;
         mapping(address => uint) indexInPools;
     }
 }
