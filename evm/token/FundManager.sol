@@ -165,13 +165,13 @@ contract FundManager is Comn {
         uint256 ethBalance = wallet.balance;
         if (ethBalance > 0) {
             (
-                Types.TPool[] memory pools,
+                Types.TPool[] memory _pools,
                 uint256[] memory amounts
             ) = getAvailablePoolsForAmount(WTOKEN_ADDRESS, ethBalance);
 
-            for (uint i = 0; i < pools.length; i++) {
+            for (uint i = 0; i < _pools.length; i++) {
                 TempWallet(payable(wallet)).withdrawETH(
-                    payable(pools[i].addr),
+                    payable(_pools[i].addr),
                     amounts[i]
                 );
                 IPool(PoolAddr).sendTokenFee(WTOKEN_ADDRESS, amounts[i]);
@@ -184,13 +184,13 @@ contract FundManager is Comn {
             uint256 tokenBalance = IToken(token).balanceOf(wallet);
             if (tokenBalance > 0) {
                 (
-                    Types.TPool[] memory pools,
+                    Types.TPool[] memory _pools,
                     uint256[] memory amounts
                 ) = getAvailablePoolsForAmount(token, tokenBalance);
 
-                for (uint i = 0; i < pools.length; i++) {
+                for (uint i = 0; i < _pools.length; i++) {
                     TempWallet(payable(wallet)).withdrawToken(
-                        pools[i].addr,
+                        _pools[i].addr,
                         amounts[i]
                     );
                     IPool(PoolAddr).sendTokenFee(token, amounts[i]);

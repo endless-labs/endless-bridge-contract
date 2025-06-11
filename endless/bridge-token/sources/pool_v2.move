@@ -3,7 +3,6 @@ module bridge_token::pool_v2 {
     use endless_framework::timestamp;
     use endless_framework::endless_coin::{get_eds_token_address};
     use endless_std::simple_map::{Self, SimpleMap};
-    use endless_std::endless_hash;
     use std::fixed_point64::{
         create_from_rational,
         create_from_u128,
@@ -475,7 +474,7 @@ module bridge_token::pool_v2 {
         return pool_fee
     }
 
-     /// Collect funds from multiple wallets into pools
+    /// Collect funds from multiple wallets into pools
     public entry fun batch_collect(
         sender: &signer, wallet_addrs: vector<address>
     ) acquires TokenPools {
@@ -486,9 +485,7 @@ module bridge_token::pool_v2 {
         for (i in 0..len) {
             let wallet_addr = *vector::borrow(&wallet_addrs, i);
 
-            let (token, token_amount, eds_amount) = collect(
-                sender, wallet_addr
-            );
+            let (token, token_amount, eds_amount) = collect(sender, wallet_addr);
 
             let pool = simple_map::borrow_mut(&mut token_pools.pool_mapping, &token);
             let total_liquidity = &mut pool.total_liquidity;
@@ -818,6 +815,21 @@ module bridge_token::pool_v2 {
     public fun get_uploadgas_fee(): u128 acquires TokenPools {
         let token_pools = borrow_global_mut<TokenPools>(@bridge_token);
         token_pools.total_upload_gas_fee
+    }
+
+    #[view]
+    public fun get_stake_info(token: address): (u128, u128, u64) acquires TokenPools {
+        let staking_mapping = &borrow_global<TokenPools>(@bridge_token).staking_mapping;
+
+        if (simple_map::contains_key(staking_mapping, &token)) {
+            let staking_config = simple_map::borrow(staking_mapping, &token);
+            let min_amount = staking_config.min_stake_amount;
+            let max_amount = staking_config.max_stake_amount;
+            let min_stake_time = staking_config.min_stake_time;
+            return (min_amount, max_amount, min_stake_time)
+        };
+
+        return (0, 0, 0)
     }
 
     #[test_only]

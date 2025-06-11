@@ -488,6 +488,27 @@ module bridge_token::execute {
         }
     }
 
+    #[view]
+    public fun get_bridge_amount(token: address): (u128, u128) acquires TokenBridges, ExecuteResource {
+        let execute_resource = borrow_global<ExecuteResource>(@bridge_token);
+        let execute_signer =
+            account::create_signer_with_capability(&execute_resource.signer_cap);
+        let execute_signer_address = signer::address_of(&execute_signer);
+        if (exists<TokenBridges>(execute_signer_address)) {
+            let bridge_mapping =
+                &borrow_global<TokenBridges>(execute_signer_address).bridge_mapping;
+
+            if (simple_map::contains_key(bridge_mapping, &token)) {
+                let bridge_config = simple_map::borrow(bridge_mapping, &token);
+                let min_amount = bridge_config.min_bridge_amount;
+                let max_amount = bridge_config.max_bridge_amount;
+                return (min_amount, max_amount)
+            }
+        };
+
+        return (0, 0)
+    }
+
     #[test_only]
     use endless_std::debug::print;
     #[test_only]

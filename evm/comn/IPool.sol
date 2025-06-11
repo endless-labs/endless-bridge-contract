@@ -50,7 +50,7 @@ interface IPool {
 
     function getAllUserStakeInfo(
         address user
-    ) external view returns (Types.UserAmountInfoForViewV2[] memory);
+    ) external view returns (Types.UserAmountInfoForView[] memory);
 
     function calBonusFromPool(
         address user,
