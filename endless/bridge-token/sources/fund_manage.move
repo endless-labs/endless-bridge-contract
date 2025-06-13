@@ -138,7 +138,13 @@ module bridge_token::fund_manage {
         role_check(admin);
 
         let manager_resource = borrow_global_mut<FundManager>(@bridge_token);
-        simple_map::add(&mut manager_resource.token_max_amount, token, max_amount);
+        if (simple_map::contains_key(&manager_resource.token_max_amount, &token)) {
+            let current_max_amount =
+                simple_map::borrow_mut(&mut manager_resource.token_max_amount, &token);
+            *current_max_amount = max_amount
+        } else {
+            simple_map::add(&mut manager_resource.token_max_amount, token, max_amount);
+        }
     }
 
     public(friend) fun verify_collect_sender(
@@ -603,8 +609,18 @@ module bridge_token::fund_manage {
 
     #[view]
     public fun get_collect_fee(): u128 acquires FundManager {
-        let manager_resource = borrow_global_mut<FundManager>(@bridge_token);
+        let manager_resource = borrow_global<FundManager>(@bridge_token);
         manager_resource.collect_fee
+    }
+
+    #[view]
+    public fun get_token_max_amount(token: address): u128 acquires FundManager {
+        let manager_resource = borrow_global<FundManager>(@bridge_token);
+        if (simple_map::contains_key(&manager_resource.token_max_amount, &token)) {
+            let current_max_amount =
+                simple_map::borrow(&manager_resource.token_max_amount, &token);
+            *current_max_amount
+        } else { 0 }
     }
 
     #[test_only]
