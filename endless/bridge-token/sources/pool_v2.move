@@ -361,10 +361,6 @@ module bridge_token::pool_v2 {
             let token = *vector::borrow(&tokens, i);
             let amount = *vector::borrow(&amounts, i);
             let fee_type = *vector::borrow(&fee_types, i);
-            assert!(
-                simple_map::contains_key(&token_pools.pool_mapping, &token),
-                error::not_found(ETOKEN_NOT_FOUND)
-            );
 
             transfer(owner, token, temp_wallet, amount);
             if (fee_type == FEE_TYPE_PLATFORM) {
@@ -487,9 +483,12 @@ module bridge_token::pool_v2 {
 
             let (token, token_amount, eds_amount) = collect(sender, wallet_addr);
 
-            let pool = simple_map::borrow_mut(&mut token_pools.pool_mapping, &token);
-            let total_liquidity = &mut pool.total_liquidity;
-            *total_liquidity = *total_liquidity + token_amount;
+            if (token_amount > 0
+                && simple_map::contains_key(&token_pools.pool_mapping, &token)) {
+                let pool = simple_map::borrow_mut(&mut token_pools.pool_mapping, &token);
+                let total_liquidity = &mut pool.total_liquidity;
+                *total_liquidity = *total_liquidity + token_amount;
+            };
 
             if (token != eds_token_address && eds_amount > 0) {
                 let pool =

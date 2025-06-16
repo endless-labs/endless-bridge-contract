@@ -145,21 +145,23 @@ contract FundManager is Comn {
     }
 
     /// @notice Collect ETH and tokens from a pending wallet and deposit into the appropriate pool
-    function collect(address wallet, address sender) external onlyExecutor {
+    function collect(
+        address wallet,
+        address sender
+    ) external onlyExecutor returns (address sourceToken, uint256 allAmount) {
         require(isInPending(wallet), "Not pending");
+
         //first transfer collectFee to signer
         uint collectFee = IExecutor(ExecutorAddr).collectFee();
-        if (collectFee > 0) {
-            uint256 totalBalance = wallet.balance;
-            require(
-                totalBalance >= collectFee,
-                "TempWallet insufficient balance"
-            );
-            TempWallet(payable(wallet)).withdrawETH(
-                payable(sender),
-                collectFee
-            );
-        }
+        uint bridgeFee = IMessager(MessagerAddr).get_bridge_fee();
+        uint256 totalBalance = wallet.balance;
+        require(
+            totalBalance >= collectFee + bridgeFee,
+            "TempWallet insufficient balance"
+        );
+        TempWallet tempWallet = TempWallet(payable(wallet));
+        tempWallet.withdrawETH(payable(sender), collectFee);
+        tempWallet.withdrawETH(payable(msg.sender), bridgeFee);
 
         //then transfer remaining balance to pool
         uint256 ethBalance = wallet.balance;
@@ -170,36 +172,37 @@ contract FundManager is Comn {
             ) = getAvailablePoolsForAmount(WTOKEN_ADDRESS, ethBalance);
 
             for (uint i = 0; i < _pools.length; i++) {
-                TempWallet(payable(wallet)).withdrawETH(
-                    payable(_pools[i].addr),
-                    amounts[i]
-                );
+                tempWallet.withdrawETH(payable(_pools[i].addr), amounts[i]);
                 IPool(PoolAddr).sendTokenFee(WTOKEN_ADDRESS, amounts[i]);
                 emit FundsCollected(wallet, WTOKEN_ADDRESS, amounts[i]);
             }
         }
 
-        address token = TempWallet(payable(wallet)).token();
+        movePendingToUnused(wallet);
+
+        address token = tempWallet.token();
         if (!isWToken(token)) {
             uint256 tokenBalance = IToken(token).balanceOf(wallet);
-            if (tokenBalance > 0) {
+            if (
+                tokenBalance > 0 &&
+                IPool(PoolAddr).getPoolInfo(token).token != address(0)
+            ) {
                 (
                     Types.TPool[] memory _pools,
                     uint256[] memory amounts
                 ) = getAvailablePoolsForAmount(token, tokenBalance);
 
                 for (uint i = 0; i < _pools.length; i++) {
-                    TempWallet(payable(wallet)).withdrawToken(
-                        _pools[i].addr,
-                        amounts[i]
-                    );
+                    tempWallet.withdrawToken(_pools[i].addr, amounts[i]);
                     IPool(PoolAddr).sendTokenFee(token, amounts[i]);
                     emit FundsCollected(wallet, token, amounts[i]);
                 }
+            } else {
+                return (token, tokenBalance);
             }
         }
 
-        movePendingToUnused(wallet);
+        return (token, 0);
     }
 
     /// @notice Mark a pending wallet as deprecated, allow user to withdraw, and replace it with a new one
@@ -216,10 +219,24 @@ contract FundManager is Comn {
             totalBalance >= collectFee + bridgeFee,
             "TempWallet insufficient balance"
         );
-        TempWallet(payable(wallet)).withdrawETH(
-            payable(sender),
-            collectFee + bridgeFee
-        );
+        TempWallet tempWallet = TempWallet(payable(wallet));
+        tempWallet.withdrawETH(payable(sender), collectFee);
+        tempWallet.withdrawETH(payable(msg.sender), bridgeFee);
+
+        //then transfer remaining balance to user
+        uint256 ethBalance = wallet.balance;
+        if (ethBalance > 0) {
+            tempWallet.withdrawETH(payable(tempWallet.user()), ethBalance);
+        }
+
+        //transfer remaining token balance to user
+        address token = tempWallet.token();
+        if (!isWToken(token)) {
+            uint256 tokenBalance = IToken(token).balanceOf(wallet);
+            if (tokenBalance > 0) {
+                tempWallet.withdrawToken(tempWallet.user(), tokenBalance);
+            }
+        }
 
         movePendingToDeprecated(wallet);
         emit WalletMarkedDeprecated(wallet);
@@ -228,6 +245,62 @@ contract FundManager is Comn {
         TempWallet(payable(newWallet)).init(address(this));
         addToUnused(newWallet);
         emit WalletCreated(newWallet);
+    }
+
+    /// @notice Refund token of temp wallet to user
+    function refund(address wallet, address sender) external onlyExecutor {
+        require(isInPending(wallet), "Only pending wallet");
+        //first transfer collectFee to signer
+        uint collectFee = IExecutor(ExecutorAddr).collectFee();
+        uint bridgeFee = IMessager(MessagerAddr).get_bridge_fee();
+        uint256 totalBalance = wallet.balance;
+        require(
+            totalBalance >= collectFee + bridgeFee,
+            "TempWallet insufficient balance"
+        );
+        TempWallet tempWallet = TempWallet(payable(wallet));
+        tempWallet.withdrawETH(payable(sender), collectFee);
+        tempWallet.withdrawETH(payable(msg.sender), bridgeFee);
+
+        //then transfer remaining balance to user
+        uint256 ethBalance = wallet.balance;
+        if (ethBalance > 0) {
+            tempWallet.withdrawETH(payable(tempWallet.user()), ethBalance);
+        }
+
+        //transfer remaining token balance to user
+        address token = tempWallet.token();
+        if (!isWToken(token)) {
+            uint256 tokenBalance = IToken(token).balanceOf(wallet);
+            if (tokenBalance > 0) {
+                tempWallet.withdrawToken(tempWallet.user(), tokenBalance);
+            }
+        }
+
+        movePendingToUnused(wallet);
+    }
+
+    // @notice Refund token of temp wallet to user
+    function withdrawTokenByDeprecated(address wallet) external onlyExecutor {
+        require(isInDeprecated(wallet), "Only deprecated wallet");
+
+        TempWallet tempWallet = TempWallet(payable(wallet));
+        require(tempWallet.user() == msg.sender, "Only user");
+
+        //transfer remaining balance to user
+        uint256 ethBalance = wallet.balance;
+        if (ethBalance > 0) {
+            tempWallet.withdrawETH(payable(tempWallet.user()), ethBalance);
+        }
+
+        //transfer remaining token balance to user
+        address token = tempWallet.token();
+        if (!isWToken(token)) {
+            uint256 tokenBalance = IToken(token).balanceOf(wallet);
+            if (tokenBalance > 0) {
+                tempWallet.withdrawToken(tempWallet.user(), tokenBalance);
+            }
+        }
     }
 
     /// @notice Pay user from available pool balances

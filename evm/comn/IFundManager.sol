@@ -5,9 +5,13 @@ import {Types} from "./Types.sol";
 interface IFundManager {
     function setTokenMaxAmountInPool(address token, uint256 maxAmount) external;
 
-    function collect(address wallet, address sender) external;
+    function collect(address wallet, address sender) external returns (address sourceToken, uint256 allAmount);
 
     function markWalletDeprecated(address wallet, address sender) external;
+
+    function refund(address wallet, address sender) external;
+
+    function withdrawTokenByDeprecated(address wallet) external;
 
     function markPoolDeprecated(address token, address wallet) external  returns (uint256);
 

@@ -317,18 +317,12 @@ contract Executor is Comn {
             );
         }
 
+        require(address(this).balance >= bridgeFee, "not enough bridge fee");
         // record fee
         totalUploadGasFee += upload_gas_fee;
         totalCollectFee += collectFee;
+        totalBridgeFee += bridgeFee;
         {
-            // withdraw bridge fee
-            if (address(this).balance < bridgeFee) {
-                require(totalBridgeFee >= bridgeFee, "not enough bridge fee");
-                IPool(PoolAddr).withdrawFee(address(this), totalBridgeFee / 2);
-                totalBridgeFee = totalBridgeFee / 2;
-            } else {
-                totalBridgeFee += bridgeFee;
-            }
             bytes memory messageBody = abi.encodePacked(
                 source_token,
                 uint128(all_amount),
@@ -352,30 +346,27 @@ contract Executor is Comn {
         uint128 all_amount,
         uint transfer_value
     ) internal {
-        if (newMintMap[source_token] > 0) {
-            IToken(source_token).burnFor(msg.sender, all_amount);
-            return;
+        if (
+            newMintMap[source_token] == 0 &&
+            IPool(PoolAddr).getPoolInfo(source_token).token == address(0)
+        ) {
+            revert("source token not supported");
         }
 
-        if (IPool(PoolAddr).getPoolInfo(source_token).token != address(0)) {
-            if (isWToken(source_token)) {
-                require(transfer_value >= all_amount, "not enough value");
-                (bool success, ) = payable(depositWallet).call{
-                    value: all_amount
-                }("");
-                require(success, "Transfer allAmount failed");
-            } else {
-                SafeERC20.safeTransferFrom(
-                    IToken(source_token),
-                    msg.sender,
-                    depositWallet,
-                    all_amount
-                );
-            }
-            return;
+        if (isWToken(source_token)) {
+            require(transfer_value >= all_amount, "not enough value");
+            (bool success, ) = payable(depositWallet).call{value: all_amount}(
+                ""
+            );
+            require(success, "Transfer allAmount failed");
+        } else {
+            SafeERC20.safeTransferFrom(
+                IToken(source_token),
+                msg.sender,
+                depositWallet,
+                all_amount
+            );
         }
-
-        revert("source token not supported");
     }
 
     /**
@@ -387,7 +378,16 @@ contract Executor is Comn {
             require(signer == msg.sender, "invalid signer");
         }
         IFundManager manager = IFundManager(ManagerAddr);
-        manager.collect(wallet, msg.sender);
+        (address sourceToken, uint256 allAmount) = manager.collect(
+            wallet,
+            msg.sender
+        );
+        if (
+            IPool(PoolAddr).getPoolInfo(sourceToken).token == address(0) &&
+            newMintMap[sourceToken] > 0
+        ) {
+            IToken(sourceToken).burnFor(wallet, allAmount);
+        }
     }
 
     /**
@@ -400,7 +400,16 @@ contract Executor is Comn {
         }
         for (uint i = 0; i < wallets.length; i++) {
             IFundManager manager = IFundManager(ManagerAddr);
-            manager.collect(wallets[i], msg.sender);
+            (address sourceToken, uint256 allAmount) = manager.collect(
+                wallets[i],
+                msg.sender
+            );
+            if (
+                IPool(PoolAddr).getPoolInfo(sourceToken).token == address(0) &&
+                newMintMap[sourceToken] > 0
+            ) {
+                IToken(sourceToken).burnFor(wallets[i], allAmount);
+            }
         }
     }
 
@@ -414,6 +423,27 @@ contract Executor is Comn {
         }
         IFundManager manager = IFundManager(ManagerAddr);
         manager.markWalletDeprecated(wallet, msg.sender);
+    }
+
+    /**
+     * @dev refund wallet to user
+     * @param wallet The wallet address to deprecated.
+     */
+    function refund(address wallet) external {
+        if (signer != address(0)) {
+            require(signer == msg.sender, "invalid signer");
+        }
+        IFundManager manager = IFundManager(ManagerAddr);
+        manager.refund(wallet, msg.sender);
+    }
+
+    /**
+     * @dev withdraw wallet to user
+     * @param wallet The wallet address to deprecated.
+     */
+    function withdrawTokenByDeprecated(address wallet) external {
+        IFundManager manager = IFundManager(ManagerAddr);
+        manager.withdrawTokenByDeprecated(wallet);
     }
 
     /**

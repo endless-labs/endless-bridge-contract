@@ -15,6 +15,7 @@ module bridge_token::token {
     use bridge_token::config::{role_check};
 
     friend bridge_token::execute;
+    friend bridge_token::fund_manage;
 
     /// Only fungible asset metadata owner can make changes.
     const ERR_NOT_OWNER: u64 = 1;
