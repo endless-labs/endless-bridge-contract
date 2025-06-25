@@ -20,7 +20,7 @@ module bridge_token::execute {
         islp,
         ismint
     };
-    use bridge_token::token::{mint, burn, transfer};
+    use bridge_token::token::{mint, transfer};
     use bridge_token::pool_v2::{
         transfer_to_pool,
         transfer_from_pool,
@@ -51,6 +51,8 @@ module bridge_token::execute {
     /// The amount exceeds the limit
     const EAMOUNT_EXCEEDS_LIMIT: u64 = 8;
     const EMULTISIG_MUST_NOT_BE_EMPTY: u64 = 9;
+    const EBODY_LENGTH_NOT_MATCH: u64 = 10;
+    const EPROCESS_MSG_STATUS: u64 = 11;
 
     struct Chain has store, drop, copy {
         type: u8,
@@ -69,6 +71,15 @@ module bridge_token::execute {
         all_amount: u128,
         from_who: address,
         to_who: address,
+        extra_data: vector<u8>
+    }
+
+    struct MsgBodyV3 has drop {
+        source_token: address,
+        all_amount: u128,
+        from_who: address,
+        to_who: address,
+        status: u8,
         extra_data: vector<u8>
     }
 
@@ -233,6 +244,10 @@ module bridge_token::execute {
                 && all_amount <= bridge_config.max_bridge_amount,
             error::invalid_argument(EAMOUNT_EXCEEDS_LIMIT)
         );
+        let mint_type = get_token_mint_type(to_bytes(&source_token));
+        if (!ismint(mint_type) && !islp(mint_type)) {
+            assert!(false, error::not_found(ECODE_MINT_TYPE_DOES_NOT_EXIST));
+        };
 
         let msg_body = MsgBody {
             source_token: source_token,
@@ -241,22 +256,23 @@ module bridge_token::execute {
             to_who: from_bcs::to_address(to_who)
         };
 
-        let payload =
+        let extra_data =
             if (option::is_some(&extra_data_opt)) {
                 let extra_data = option::borrow(&extra_data_opt);
-                let body_v1 = decode_body(to_bytes(&msg_body));
-                let body_v2 = MsgBodyV2 {
-                    source_token: body_v1.source_token,
-                    all_amount: body_v1.all_amount,
-                    from_who: body_v1.from_who,
-                    to_who: body_v1.to_who,
-                    extra_data: *extra_data
-                };
-                to_bytes(&body_v2)
+                *extra_data
             } else {
-                let body_v1 = decode_body(to_bytes(&msg_body));
-                to_bytes(&body_v1)
+                vector::empty()
             };
+        let body_v1 = decode_body(to_bytes(&msg_body));
+        let body_v3 = MsgBodyV3 {
+            source_token: body_v1.source_token,
+            all_amount: body_v1.all_amount,
+            from_who: body_v1.from_who,
+            to_who: body_v1.to_who,
+            status: 0, //unused
+            extra_data: extra_data
+        };
+        let payload = to_bytes(&body_v3);
 
         // transfer the fee token to the pool
         let eds_token_address = get_eds_token_address();
@@ -281,36 +297,16 @@ module bridge_token::execute {
         vector::push_back(&mut amounts, upload_gas_fee);
         vector::push_back(&mut fee_types, 3);
 
-        let mint_type = get_token_mint_type(to_bytes(&msg_body.source_token));
-        if (ismint(mint_type)) {
-            transfer(
-                sender,
-                source_token,
-                @bridge_token,
-                all_amount
-            );
-            burn(source_token, all_amount);
-            transfer_to_pool(
-                sender,
-                eds_token_address,
-                tokens,
-                amounts,
-                fee_types
-            );
-        } else if (islp(mint_type)) {
-            vector::push_back(&mut tokens, source_token);
-            vector::push_back(&mut amounts, all_amount);
-            vector::push_back(&mut fee_types, 0);
-            transfer_to_pool(
-                sender,
-                source_token,
-                tokens,
-                amounts,
-                fee_types
-            );
-        } else {
-            assert!(false, error::not_found(ECODE_MINT_TYPE_DOES_NOT_EXIST));
-        };
+        vector::push_back(&mut tokens, source_token);
+        vector::push_back(&mut amounts, all_amount);
+        vector::push_back(&mut fee_types, 0);
+        transfer_to_pool(
+            sender,
+            source_token,
+            tokens,
+            amounts,
+            fee_types
+        );
 
         send_message_v2(
             sender,
@@ -322,7 +318,6 @@ module bridge_token::execute {
             payload,
             upload_gas_fee
         );
-
     }
 
     /// Finish the bridge
@@ -375,6 +370,9 @@ module bridge_token::execute {
             );
         } else {
             assert!(!vector::is_empty(&multisig), EMULTISIG_MUST_NOT_BE_EMPTY);
+            assert!(vector::length(&msg_body) >= 113, EBODY_LENGTH_NOT_MATCH);
+            let status = from_bcs::to_u8(vector::slice(&msg_body, 112, 113));
+            assert!(status == 1, EPROCESS_MSG_STATUS); // 0: unused, 1: compiled, 2: deprecated, 3: refunded
         };
 
         let accum_pk = get_pubkeys(pks);
@@ -457,6 +455,12 @@ module bridge_token::execute {
             }
         };
 
+        let extra_data =
+            if (is_estimate) {
+                vector::slice(&msg_body, 112, vector::length(&msg_body))
+            } else {
+                vector::slice(&msg_body, 113, vector::length(&msg_body))
+            };
         event::emit(
             BridgeFinish {
                 from_chain: chain_from_bytes(from_chain),
@@ -466,7 +470,7 @@ module bridge_token::execute {
                 to_who: body.to_who,
                 to_token: from_bcs::to_address(to_token),
                 to_amount: all_amount,
-                extra_data: vector::slice(&msg_body, 112, vector::length(&msg_body))
+                extra_data: extra_data
             }
         );
     }

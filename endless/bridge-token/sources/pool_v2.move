@@ -3,6 +3,7 @@ module bridge_token::pool_v2 {
     use endless_framework::timestamp;
     use endless_framework::endless_coin::{get_eds_token_address};
     use endless_std::simple_map::{Self, SimpleMap};
+    use endless_std::table::{Self};
     use std::fixed_point64::{
         create_from_rational,
         create_from_u128,
@@ -51,6 +52,8 @@ module bridge_token::pool_v2 {
     /// Function is deprecated.
     const EDEPRECATED_FUNCTION: u64 = 13;
     const EWITHDRAW_FEE_TYPE: u64 = 14;
+    /// No longer supported.
+    const ENO_LONGER_SUPPORTED: u64 = 15;
 
     const FEE_TYPE_PLATFORM: u8 = 1;
     const FEE_TYPE_COLLECT: u8 = 2;
@@ -105,6 +108,11 @@ module bridge_token::pool_v2 {
         withdrawal: u128
     }
 
+    struct OrderStore has key {
+        // to_chain_id => nonce => status
+        order_status: simple_map::SimpleMap<u128, table::Table<u64, u8>>
+    }
+
     fun init_module(account: &signer) {
         let (_resource_signer, signer_cap) =
             account::create_resource_account(account, b"pool");
@@ -120,6 +128,14 @@ module bridge_token::pool_v2 {
                 staking_mapping: simple_map::create<address, StakingConfig>()
             }
         );
+    }
+
+    public entry fun initialize_order_store(account: &signer) {
+        if (signer::address_of(account) == @bridge_token
+            && !exists<OrderStore>(@bridge_token)) {
+            let order_status = simple_map::new();
+            move_to(account, OrderStore { order_status });
+        }
     }
 
     public entry fun set_financer(admin: &signer, new_financer: address) acquires TokenPools {
@@ -470,10 +486,19 @@ module bridge_token::pool_v2 {
         return pool_fee
     }
 
-    /// Collect funds from multiple wallets into pools
     public entry fun batch_collect(
-        sender: &signer, wallet_addrs: vector<address>
-    ) acquires TokenPools {
+        _sender: &signer, _wallet_addrs: vector<address>
+    ) {
+        abort error::not_implemented(ENO_LONGER_SUPPORTED)
+    }
+
+    /// Collect funds from multiple wallets into pools
+    public entry fun batch_collect_v2(
+        sender: &signer,
+        wallet_addrs: vector<address>,
+        to_chains: vector<u128>,
+        to_nonces: vector<u64>
+    ) acquires TokenPools, OrderStore {
         let token_pools = borrow_global_mut<TokenPools>(@bridge_token);
         let eds_token_address = get_eds_token_address();
 
@@ -482,6 +507,18 @@ module bridge_token::pool_v2 {
             let wallet_addr = *vector::borrow(&wallet_addrs, i);
 
             let (token, token_amount, eds_amount) = collect(sender, wallet_addr);
+
+            let to_chain = *vector::borrow(&to_chains, i);
+            let to_nonce = *vector::borrow(&to_nonces, i);
+            let order_store = borrow_global_mut<OrderStore>(@bridge_token);
+
+            if (!simple_map::contains_key(&order_store.order_status, &to_chain)) {
+                let inner_table = table::new();
+                simple_map::add(&mut order_store.order_status, to_chain, inner_table);
+            };
+            let inner_table =
+                simple_map::borrow_mut(&mut order_store.order_status, &to_chain);
+            table::upsert(inner_table, to_nonce, 1); // 1 means collected
 
             if (token_amount > 0
                 && simple_map::contains_key(&token_pools.pool_mapping, &token)) {
@@ -503,9 +540,56 @@ module bridge_token::pool_v2 {
 
     /// mark wallet deprecated
     public entry fun mark_wallet_deprecated(
-        sender: &signer, wallet_addr: address
+        _sender: &signer, _wallet_addr: address
     ) {
+        abort error::not_implemented(ENO_LONGER_SUPPORTED)
+    }
+
+    /// mark wallet deprecated
+    public entry fun mark_wallet_deprecated_v2(
+        sender: &signer,
+        wallet_addr: address,
+        to_chain: u128,
+        to_nonce: u64
+    ) acquires OrderStore {
         mark_wallet(sender, wallet_addr);
+
+        let order_store = borrow_global_mut<OrderStore>(@bridge_token);
+        if (!simple_map::contains_key(&order_store.order_status, &to_chain)) {
+            let inner_table = table::new();
+            simple_map::add(&mut order_store.order_status, to_chain, inner_table);
+        };
+        let inner_table = simple_map::borrow_mut(
+            &mut order_store.order_status, &to_chain
+        );
+        table::upsert(inner_table, to_nonce, 2); // 2 means deprecated
+    }
+
+    /// user wallet to refund
+    public entry fun refund_wallet(
+        _sender: &signer, _temp_wallet: address
+    ) {
+        abort error::not_implemented(ENO_LONGER_SUPPORTED)
+    }
+
+    /// user wallet to refund
+    public entry fun refund_wallet_v2(
+        sender: &signer,
+        temp_wallet: address,
+        to_chain: u128,
+        to_nonce: u64
+    ) acquires OrderStore {
+        refund_to_user(signer::address_of(sender), temp_wallet);
+
+        let order_store = borrow_global_mut<OrderStore>(@bridge_token);
+        if (!simple_map::contains_key(&order_store.order_status, &to_chain)) {
+            let inner_table = table::new();
+            simple_map::add(&mut order_store.order_status, to_chain, inner_table);
+        };
+        let inner_table = simple_map::borrow_mut(
+            &mut order_store.order_status, &to_chain
+        );
+        table::upsert(inner_table, to_nonce, 3); // 3 means refund
     }
 
     /// mark pool deprecated
@@ -584,11 +668,6 @@ module bridge_token::pool_v2 {
         let total_liquidity = &mut pool.total_liquidity;
         *total_liquidity = *total_liquidity - amount;
         payout_to_user(signer::address_of(sender), eds_token_address, amount);
-    }
-
-    /// user wallet to refund
-    public entry fun refund_wallet(sender: &signer, temp_wallet: address) {
-        refund_to_user(signer::address_of(sender), temp_wallet);
     }
 
     public entry fun withdraw_deprecated_pool(
@@ -829,6 +908,21 @@ module bridge_token::pool_v2 {
         };
 
         return (0, 0, 0)
+    }
+
+    #[view]
+    public fun get_order_status(to_chain: u128, to_nonce: u64): u8 acquires OrderStore {
+        let order_store = borrow_global<OrderStore>(@bridge_token);
+        if (!simple_map::contains_key(&order_store.order_status, &to_chain)) {
+            return 0
+        };
+
+        let inner_table = simple_map::borrow(&order_store.order_status, &to_chain);
+        if (!table::contains(inner_table, to_nonce)) {
+            return 0
+        };
+
+        return *table::borrow(inner_table, to_nonce)
     }
 
     #[test_only]

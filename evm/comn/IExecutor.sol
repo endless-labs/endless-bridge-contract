@@ -68,24 +68,20 @@ interface IExecutor {
 
     function decode_bridge_msg_body(
         bytes memory msg_body
-    ) external pure returns (Types.BridgeMessageBody memory);
+    ) external pure returns (Types.BridgeMessageBodyV2 memory);
 
     function decode_bridge_msg(
         Types.Message memory decMsg
     )
         external
         pure
-        returns (Types.MessageHeader memory, Types.BridgeMessageBody memory);
+        returns (Types.MessageHeader memory, Types.BridgeMessageBodyV2 memory);
 
     function processMsg(
         Types.Message memory message,
         // uint16[] memory signer_index,
         bytes[] memory signature
     ) external returns (bool);
-
-    function collect(address wallet) external;
-
-    function markWalletDeprecated(address wallet) external;
 
     function getLpFeeAndFinalAmount(
         uint source_chain_id,

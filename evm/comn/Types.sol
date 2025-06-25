@@ -120,6 +120,14 @@ library Types {
         // uint slipage;
     }
 
+    struct BridgeMessageBodyV2 {
+        bytes32 source_token;
+        uint128 all_amount;
+        bytes32 from_who;
+        bytes32 to_who;
+        uint8 status; // OrderStatus
+    }
+
     struct ERC20Permit {
         address owner;
         address spender;
@@ -165,5 +173,13 @@ library Types {
         uint256 next_idx;
         uint256 used_idx;
         mapping(address => uint) indexInPools;
+    }
+
+    // 0: Unused, 1: Completed, 2: Deprecated, 3: Refunded
+    enum OrderStatus {
+        Unused,
+        Completed,
+        Deprecated,
+        Refunded
     }
 }

@@ -54,6 +54,9 @@ contract Executor is Comn {
     uint public totalBridgeFee;
     uint public totalCollectFee;
 
+    // to chain_id => nonce => status of nonce [0: unused, 1: compiled, 2: deprecated, 3: refunded]
+    mapping(uint72 => mapping(uint64 => Types.OrderStatus)) public orderStatus;
+
     event TokenRelationshipSet(
         uint indexed source_chain_id,
         bytes32 indexed source_token,
@@ -328,6 +331,7 @@ contract Executor is Comn {
                 uint128(all_amount),
                 ComFunUtil.addressToBytes32(address(msg.sender)),
                 to_who,
+                uint8(Types.OrderStatus.Unused),
                 extra_data
             );
             IMessager(MessagerAddr).emit_msg{value: bridgeFee}(
@@ -372,8 +376,10 @@ contract Executor is Comn {
     /**
      * @dev collect depositWallet to pool
      * @param wallet The wallet address to collect.
+     * @param toChainID The destination chain ID.
+     * @param nonce The nonce of the message.
      */
-    function collect(address wallet) external {
+    function collect(address wallet, uint72 toChainID, uint64 nonce) external {
         if (signer != address(0)) {
             require(signer == msg.sender, "invalid signer");
         }
@@ -382,6 +388,7 @@ contract Executor is Comn {
             wallet,
             msg.sender
         );
+        orderStatus[toChainID][nonce] = Types.OrderStatus.Completed;
         if (
             IPool(PoolAddr).getPoolInfo(sourceToken).token == address(0) &&
             newMintMap[sourceToken] > 0
@@ -393,8 +400,14 @@ contract Executor is Comn {
     /**
      * @dev collect depositWallet to pool
      * @param wallets The wallet address to collect.
+     * @param toChainIDs The destination chain ID.
+     * @param nonces The nonce of the message.
      */
-    function collect(address[] memory wallets) external {
+    function collect(
+        address[] memory wallets,
+        uint72[] memory toChainIDs,
+        uint64[] memory nonces
+    ) external {
         if (signer != address(0)) {
             require(signer == msg.sender, "invalid signer");
         }
@@ -404,6 +417,7 @@ contract Executor is Comn {
                 wallets[i],
                 msg.sender
             );
+            orderStatus[toChainIDs[i]][nonces[i]] = Types.OrderStatus.Completed;
             if (
                 IPool(PoolAddr).getPoolInfo(sourceToken).token == address(0) &&
                 newMintMap[sourceToken] > 0
@@ -416,11 +430,18 @@ contract Executor is Comn {
     /**
      * @dev deprecated wallet
      * @param wallet The wallet address to deprecated.
+     * @param toChainID The destination chain ID.
+     * @param nonce The nonce of the message.
      */
-    function markWalletDeprecated(address wallet) external {
+    function markWalletDeprecated(
+        address wallet,
+        uint72 toChainID,
+        uint64 nonce
+    ) external {
         if (signer != address(0)) {
             require(signer == msg.sender, "invalid signer");
         }
+        orderStatus[toChainID][nonce] = Types.OrderStatus.Deprecated;
         IFundManager manager = IFundManager(ManagerAddr);
         manager.markWalletDeprecated(wallet, msg.sender);
     }
@@ -428,11 +449,14 @@ contract Executor is Comn {
     /**
      * @dev refund wallet to user
      * @param wallet The wallet address to deprecated.
+     * @param toChainID The destination chain ID.
+     * @param nonce The nonce of the message.
      */
-    function refund(address wallet) external {
+    function refund(address wallet, uint72 toChainID, uint64 nonce) external {
         if (signer != address(0)) {
             require(signer == msg.sender, "invalid signer");
         }
+        orderStatus[toChainID][nonce] = Types.OrderStatus.Refunded;
         IFundManager manager = IFundManager(ManagerAddr);
         manager.refund(wallet, msg.sender);
     }
@@ -464,10 +488,10 @@ contract Executor is Comn {
         }
         (
             Types.MessageHeader memory msg_header,
-            Types.BridgeMessageBody memory msg_body
+            Types.BridgeMessageBodyV2 memory msg_body
         ) = decode_bridge_msg(message);
 
-        uint from_chain = ComFunUtil.combainChain(msg_header.from_chain);
+        uint72 from_chain = ComFunUtil.combainChain(msg_header.from_chain);
         require(
             address(this) == ComFunUtil.bytes32ToAddress(msg_header.receiver),
             "processMsg receiver error"
@@ -496,6 +520,12 @@ contract Executor is Comn {
             msg.sender != address(0x0000000000000000000000000000000000000001)
         ) {
             revert("nonce has been uploaded");
+        }
+        if (msg.sender != address(0x0000000000000000000000000000000000000001)) {
+            require(
+                msg_body.status == uint8(Types.OrderStatus.Completed),
+                "processMsg status error"
+            );
         }
 
         // amount decimal process
@@ -616,17 +646,18 @@ contract Executor is Comn {
     /**
      * @dev Decodes the body of a bridge message from a calldata bytes.
      * @param msg_body The calldata bytes representing the ABI - packed bridge message body.
-     * @return A Types.BridgeMessageBody struct decoded from the input bytes.
+     * @return A Types.BridgeMessageBodyV2 struct decoded from the input bytes.
      */
     function decode_bridge_msg_body(
         bytes memory msg_body // this is a abi packed type
-    ) public pure returns (Types.BridgeMessageBody memory) {
+    ) public pure returns (Types.BridgeMessageBodyV2 memory) {
         require(msg_body.length >= 112, "Invalid body length");
 
         bytes32 source_token;
         uint128 all_amount;
         bytes32 from_who;
         bytes32 to_who;
+        uint8 status = 0;
         assembly {
             source_token := mload(add(msg_body, 32))
             let temp := mload(add(msg_body, 48))
@@ -634,13 +665,16 @@ contract Executor is Comn {
             from_who := mload(add(msg_body, 80))
             to_who := mload(add(msg_body, 112))
         }
-
+        if (msg_body.length >= 113) {
+            status = uint8(msg_body[112]);
+        }
         return
-            Types.BridgeMessageBody({
+            Types.BridgeMessageBodyV2({
                 source_token: source_token,
                 all_amount: all_amount,
                 from_who: from_who,
-                to_who: to_who
+                to_who: to_who,
+                status: status
             });
     }
 
@@ -654,9 +688,9 @@ contract Executor is Comn {
     )
         public
         pure
-        returns (Types.MessageHeader memory, Types.BridgeMessageBody memory)
+        returns (Types.MessageHeader memory, Types.BridgeMessageBodyV2 memory)
     {
-        Types.BridgeMessageBody memory bridgeMsgBody = decode_bridge_msg_body(
+        Types.BridgeMessageBodyV2 memory bridgeMsgBody = decode_bridge_msg_body(
             decMsg.msg_body
         );
 
