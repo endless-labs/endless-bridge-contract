@@ -70,6 +70,52 @@ contract Executor is Comn {
         bytes32 indexed source_token
     );
 
+    event WalletCollected(
+        address indexed wallet,
+        uint72 indexed toChainID,
+        uint64 indexed nonce,
+        address sourceToken,
+        uint256 amount
+    );
+    
+    event WalletRefunded(
+        address indexed wallet,
+        uint72 indexed toChainID,
+        uint64 indexed nonce
+    );
+    
+    event WalletDeprecated(
+        address indexed wallet,
+        uint72 indexed toChainID,
+        uint64 indexed nonce
+    );
+    
+    event SignerUpdated(
+        address indexed oldSigner,
+        address indexed newSigner
+    );
+    
+    event CollectFeeUpdated(
+        uint256 oldFee,
+        uint256 newFee
+    );
+    
+    event CrossTokenLimitsUpdated(
+        address indexed token,
+        uint256 minAmount,
+        uint256 maxAmount
+    );
+    
+    event ChainContractUpdated(
+        uint indexed sourceChainId,
+        bytes32 contractAddr
+    );
+    
+    event ChainFeeTokenUpdated(
+        uint indexed sourceChainId,
+        bytes32 feeTokenAddr
+    );
+
     /**
      * @dev Sets the contract address for a specified chain. This function can only be called by the administrator.
      * @param source_chain_id The ID of the source chain.
@@ -80,6 +126,7 @@ contract Executor is Comn {
         bytes32 contract_addr
     ) public onlyAdmin {
         chainContractMap[source_chain_id] = contract_addr;
+        emit ChainContractUpdated(source_chain_id, contract_addr);
     }
 
     /**
@@ -92,6 +139,7 @@ contract Executor is Comn {
         bytes32 fee_token_addr
     ) public onlyAdmin {
         chainFeeTokenMap[source_chain_id] = fee_token_addr;
+        emit ChainFeeTokenUpdated(source_chain_id, fee_token_addr);
     }
 
     /**
@@ -194,6 +242,7 @@ contract Executor is Comn {
         require(minAmount <= maxAmount, "minAmount > maxAmount");
         tokenCrossMinAmount[token] = minAmount;
         tokenCrossMaxAmount[token] = maxAmount;
+        emit CrossTokenLimitsUpdated(token, minAmount, maxAmount);
     }
 
     /**
@@ -201,7 +250,9 @@ contract Executor is Comn {
      * @param _collectFee fee amount.
      */
     function setCollectFee(uint256 _collectFee) external onlyAdmin {
+        uint256 oldFee = collectFee;
         collectFee = _collectFee;
+        emit CollectFeeUpdated(oldFee, _collectFee);
     }
 
     /**
@@ -210,7 +261,9 @@ contract Executor is Comn {
      */
     function setSigner(address newSigner) external onlyAdmin {
         // 0x0 means skip verify
+        address oldSigner = signer;
         signer = newSigner;
+        emit SignerUpdated(oldSigner, newSigner);
     }
 
     /**
@@ -232,7 +285,7 @@ contract Executor is Comn {
             address(this)
         );
 
-        emit Types.Log("newToken", address(newToken));
+        emit Types.Log("newToken", (address(newToken)));
 
         if (newMintMap[address(newToken)] != 0) {
             revert("token already in use");
@@ -395,6 +448,8 @@ contract Executor is Comn {
         ) {
             IToken(sourceToken).burnFor(wallet, allAmount);
         }
+
+        emit WalletCollected(wallet, toChainID, nonce, sourceToken, allAmount);
     }
 
     /**
@@ -424,6 +479,8 @@ contract Executor is Comn {
             ) {
                 IToken(sourceToken).burnFor(wallets[i], allAmount);
             }
+
+            emit WalletCollected(wallets[i], toChainIDs[i], nonces[i], sourceToken, allAmount);
         }
     }
 
@@ -444,6 +501,8 @@ contract Executor is Comn {
         orderStatus[toChainID][nonce] = Types.OrderStatus.Deprecated;
         IFundManager manager = IFundManager(ManagerAddr);
         manager.markWalletDeprecated(wallet, msg.sender);
+
+        emit WalletDeprecated(wallet, toChainID, nonce);
     }
 
     /**
@@ -459,6 +518,8 @@ contract Executor is Comn {
         orderStatus[toChainID][nonce] = Types.OrderStatus.Refunded;
         IFundManager manager = IFundManager(ManagerAddr);
         manager.refund(wallet, msg.sender);
+
+        emit WalletRefunded(wallet, toChainID, nonce);
     }
 
     /**

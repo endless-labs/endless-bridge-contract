@@ -60,6 +60,32 @@ contract Pool is Comn {
     uint256 public lockPeriod = 1 days;
     mapping(address => uint256) public userStakeTime;
 
+    event TokenStaked(
+        address indexed user,
+        address indexed token,
+        uint256 amount,
+        uint256 timestamp
+    );
+    event TokenWithdrawn(
+        address indexed user,
+        address indexed token,
+        uint256 amount
+    );
+    event BonusWithdrawn(
+        address indexed user,
+        address indexed token,
+        uint256 amount
+    );
+    event FeeWithdrawn(address indexed receiver, uint256 amount);
+
+    event TokenStakeAmountUpdated(
+        address indexed token,
+        uint256 minAmount,
+        uint256 maxAmount
+    );
+
+    event LockPeriodUpdated(uint256 oldPeriod, uint256 newPeriod);
+
     /**
      * @dev Modifier that restricts a function to be called only by the executor.
      * Throws an error if the caller is not the executor.
@@ -92,6 +118,7 @@ contract Pool is Comn {
     ) external onlyAdmin {
         tokenStakeMinAmount[token] = minAmount;
         tokenStakeMaxAmount[token] = maxAmount;
+        emit TokenStakeAmountUpdated(token, minAmount, maxAmount);
     }
 
     /**
@@ -100,7 +127,9 @@ contract Pool is Comn {
      * @param _seconds lock period in seconds.
      */
     function setLockPeriod(uint256 _seconds) external onlyAdmin {
+        uint256 oldPeriod = lockPeriod;
         lockPeriod = _seconds;
+        emit LockPeriodUpdated(oldPeriod, _seconds);
     }
 
     /**
@@ -228,6 +257,12 @@ contract Pool is Comn {
         userStakeTokenSet[msg.sender].add(stakeToken);
         // Add the staked amount to the pool.
         _addStakeAmount(stakeToken, amount);
+        emit TokenStaked(
+            msg.sender,
+            stakeToken,
+            amount,
+            ComFunUtil.currentTimestamp()
+        );
     }
 
     /**
@@ -256,6 +291,7 @@ contract Pool is Comn {
         // Send the tokens to the user.
         IFundManager manager = IFundManager(ManagerAddr);
         manager.payoutToUser(stakeToken, msg.sender, amount);
+        emit TokenWithdrawn(msg.sender, stakeToken, amount);
     }
 
     /**
@@ -287,6 +323,7 @@ contract Pool is Comn {
         // Send the tokens to the user.
         IFundManager manager = IFundManager(ManagerAddr);
         manager.payoutToUser(stakeToken, user, amount);
+        emit BonusWithdrawn(user, stakeToken, amount);
     }
 
     /**
@@ -500,7 +537,7 @@ contract Pool is Comn {
         poolMap[token].inAmount -= amount;
         // Decrease the locked amount in the pool.
         poolMap[token].lockAmount -= amount;
-        
+
         // Transfer the tokens from the contract to the relay.
         IFundManager manager = IFundManager(ManagerAddr);
         manager.payoutToUser(token, relay, amount);
@@ -512,8 +549,14 @@ contract Pool is Comn {
      * @param amount The amount to be withdrawn.
      */
     function withdrawFee(address receiver, uint amount) public onlyExecutor {
-        require(poolMap[WTOKEN_ADDRESS].inAmount >= amount, "Insufficient inAmount");
-        require(poolMap[WTOKEN_ADDRESS].lockAmount >= amount, "Insufficient lockAmount");
+        require(
+            poolMap[WTOKEN_ADDRESS].inAmount >= amount,
+            "Insufficient inAmount"
+        );
+        require(
+            poolMap[WTOKEN_ADDRESS].lockAmount >= amount,
+            "Insufficient lockAmount"
+        );
 
         // Decrease the total amount in the pool.
         poolMap[WTOKEN_ADDRESS].inAmount -= amount;
@@ -522,6 +565,7 @@ contract Pool is Comn {
 
         IFundManager manager = IFundManager(ManagerAddr);
         manager.payoutToUser(WTOKEN_ADDRESS, receiver, amount);
+        emit FeeWithdrawn(receiver, amount);
     }
 
     /**
