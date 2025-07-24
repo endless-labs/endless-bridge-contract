@@ -92,6 +92,39 @@ contract FundManager is Comn {
         address indexed poolAddr,
         uint256 maxAmount
     );
+     event PoolMarkedDeprecated(
+        address indexed token,
+        address indexed wallet,
+        uint256 available
+    );
+    event FundsRefunded(
+        address indexed wallet,
+        address indexed user,
+        uint256 ethAmount,
+        uint256 tokenAmount
+    );
+    event PayoutCompleted(
+        address indexed token,
+        address indexed user,
+        uint256 amount
+    );
+    event DeprecatedPoolWithdrawal(
+        address indexed token,
+        address indexed wallet,
+        address indexed financer,
+        uint256 amount
+    );
+    event DeprecatedWalletWithdrawal(
+        address indexed wallet,
+        address indexed user,
+        uint256 ethAmount,
+        uint256 tokenAmount
+    );
+    
+    event TokenMaxAmountUpdated(
+        address indexed token,
+        uint256 maxAmount
+    );
 
     /**
      * @dev Modifier that restricts a function to be called only by the executor.
@@ -129,6 +162,7 @@ contract FundManager is Comn {
     ) external onlyAdmin {
         require(maxAmount > 0, "Max amount must be > 0");
         tokenMaxAmountInPool[token] = maxAmount;
+        emit TokenMaxAmountUpdated(token, maxAmount);
     }
 
     /// @notice Get an unused wallet and mark it as pending
@@ -277,6 +311,7 @@ contract FundManager is Comn {
             }
         }
 
+        emit FundsRefunded(wallet, tempWallet.user(), ethBalance, tokenBalance);
         movePendingToUnused(wallet);
     }
 
@@ -301,6 +336,8 @@ contract FundManager is Comn {
                 tempWallet.withdrawToken(tempWallet.user(), tokenBalance);
             }
         }
+
+        emit DeprecatedWalletWithdrawal(wallet, tempWallet.user(), ethBalance, tokenBalance);
     }
 
     /// @notice Pay user from available pool balances
@@ -354,6 +391,7 @@ contract FundManager is Comn {
         tp.used_idx = used_idx;
 
         require(remaining == 0, "Insufficient pool balance");
+        emit PayoutCompleted(token, user, amount);
     }
 
     /// @notice Same as getPools, provided for naming flexibility
@@ -468,6 +506,7 @@ contract FundManager is Comn {
         pool.enabled = false;
 
         available = IToken(token).balanceOf(pool.addr);
+        emit PoolMarkedDeprecated(token, wallet, available);
         return available;
     }
 
@@ -495,6 +534,7 @@ contract FundManager is Comn {
         } else {
             TempWallet(payable(pool.addr)).withdrawToken(msg.sender, amount);
         }
+        emit DeprecatedPoolWithdrawal(token, wallet, msg.sender, amount);
     }
 
     /// @dev Ensure wallet implementation is initialized before cloning

@@ -21,6 +21,11 @@ contract Validator is Comn, IValidator {
     // Defines a private set of type AddressSet to store the public keys of validators
     uint private min_verify_threshold;
 
+    // Events
+    event ValidatorsAdded(address[] validators, uint threshold);
+    event ValidatorsDeleted(address[] validators, uint newThreshold);
+    event ThresholdUpdated(uint oldThreshold, uint newThreshold);
+
     // Defines a private unsigned integer variable to store the minimum verification threshold
 
     /**
@@ -52,6 +57,7 @@ contract Validator is Comn, IValidator {
 
         // Sets the minimum verification threshold
         min_verify_threshold = threshold;
+        emit ValidatorsAdded(signer_pk, threshold);
     }
 
     /**
@@ -72,6 +78,8 @@ contract Validator is Comn, IValidator {
         uint threshold = validators.length();
         // Sets the new minimum verification threshold to the smaller value between the current minimum verification threshold and the length of the validator set
         min_verify_threshold = Math.min(min_verify_threshold, threshold);
+
+        emit ValidatorsDeleted(signer_pk, min_verify_threshold);
         return min_verify_threshold;
     }
 
@@ -88,7 +96,10 @@ contract Validator is Comn, IValidator {
             );
         }
         // Sets the minimum verification threshold
+        uint oldThreshold = min_verify_threshold;
         min_verify_threshold = threshold;
+        
+        emit ThresholdUpdated(oldThreshold, threshold);
     }
 
     /**

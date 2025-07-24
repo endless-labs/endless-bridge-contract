@@ -10,6 +10,9 @@ contract BridgeToken is ERC20 {
     // decimals
     uint8 private _decimals;
 
+    event TokenMinted(address indexed account, uint256 amount);
+    event TokenBurned(address indexed account, uint256 amount);
+
     /**
      * @dev Throws if called by any account other than the master.
      */
@@ -50,6 +53,7 @@ contract BridgeToken is ERC20 {
      */
     function mintFor(address account, uint256 amount) public onlyMinter {
         _mint(account, amount);
+        emit TokenMinted(account, amount);
     }
 
     /**
@@ -57,5 +61,6 @@ contract BridgeToken is ERC20 {
      */
     function burnFor(address account, uint256 amount) public onlyMinter {
         _burn(account, amount);
+        emit TokenBurned(account, amount);
     }
 }

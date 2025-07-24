@@ -32,6 +32,7 @@ contract Messager is Comn, IMessager {
         uint64 nonce,
         bytes mbody
     );
+    event WithdrewFee(address indexed withdrawer, uint256 amount, uint256 timestamp);
 
     /**
      * @dev Sets the bridge fee. Only the administrator can call this function.
@@ -266,6 +267,7 @@ contract Messager is Comn, IMessager {
         require(amount <= address(this).balance, "not enough balance");
 
         Address.sendValue(payable(msg.sender), amount);
+        emit WithdrewFee(msg.sender, amount, block.timestamp);
     }
 
     function get_bridge_fee() external view returns (uint) {
