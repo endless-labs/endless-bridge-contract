@@ -304,8 +304,9 @@ contract FundManager is Comn {
 
         //transfer remaining token balance to user
         address token = tempWallet.token();
+        uint256 tokenBalance = 0;
         if (!isWToken(token)) {
-            uint256 tokenBalance = IToken(token).balanceOf(wallet);
+            tokenBalance = IToken(token).balanceOf(wallet);
             if (tokenBalance > 0) {
                 tempWallet.withdrawToken(tempWallet.user(), tokenBalance);
             }
@@ -330,8 +331,9 @@ contract FundManager is Comn {
 
         //transfer remaining token balance to user
         address token = tempWallet.token();
+        uint256 tokenBalance = 0;
         if (!isWToken(token)) {
-            uint256 tokenBalance = IToken(token).balanceOf(wallet);
+            tokenBalance = IToken(token).balanceOf(wallet);
             if (tokenBalance > 0) {
                 tempWallet.withdrawToken(tempWallet.user(), tokenBalance);
             }
