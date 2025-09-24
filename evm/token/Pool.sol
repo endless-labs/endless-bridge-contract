@@ -356,6 +356,10 @@ contract Pool is Comn {
         // Calculate the decrease in the staked amount.
         uint stakedDecrease = (allAmount * poolMap[destToken].amount) /
             poolMap[destToken].inAmount;
+        require(
+            stakedDecrease <= poolMap[destToken].amount,
+            "pool amount insufficient for transfer"
+        );
         // Decrease the staked amount in the pool.
         poolMap[destToken].amount -= stakedDecrease;
         // Decrease the total amount in the pool.
@@ -611,8 +615,17 @@ contract Pool is Comn {
             amount <= poolMap[token].stakeAmount,
             "not enough pool stakeAmount assets"
         );
-        uint stakedDecrease = (amount * userAllAmount) /
+        
+        uint userStakeRatio = (userAllAmount * 1e18) /
             poolMap[token].stakeAmount;
+        uint withdrawRatio = (amount * 1e18) / userAllAmount;
+        uint stakedDecrease = (poolMap[token].amount * userStakeRatio) / 1e18;
+        stakedDecrease = (stakedDecrease * withdrawRatio) / 1e18;
+        require(
+            stakedDecrease <= poolMap[token].amount,
+            "pool amount insufficient for withdrawal"
+        );
+
         poolMap[token].amount -= stakedDecrease;
         poolMap[token].inAmount -= amount;
         poolMap[token].stakeAmount -= amount;
