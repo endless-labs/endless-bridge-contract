@@ -43,6 +43,14 @@ module bridge_token::fund_manage {
         enabled: bool
     }
 
+    /// view struct
+    struct TPoolView has copy {
+        addr: address,
+        token: address,
+        max_amount: u128,
+        enabled: bool
+    }
+
     /// Token Pool holding multiple TPools
     struct TokenPool has key, store {
         pools: vector<TPool>,
@@ -662,6 +670,26 @@ module bridge_token::fund_manage {
                 simple_map::borrow(&manager_resource.token_max_amount, &token);
             *current_max_amount
         } else { 0 }
+    }
+
+    #[view]
+    public fun get_token_pools(token: address): vector<TPoolView> acquires FundManager {
+        let manager_resource = borrow_global<FundManager>(@bridge_token);
+        assert!(table::contains(&manager_resource.token_pools, token), 1003); // Token pool not found
+        let token_pool = table::borrow(&manager_resource.token_pools, token);
+        let len = vector::length(&token_pool.pools);
+        let pools = vector::empty<TPoolView>();
+        for (i in 0..len) {
+            let pool_ref = vector::borrow(&token_pool.pools, i);
+            let tpv = TPoolView {
+                addr: pool_ref.addr,
+                token: pool_ref.token,
+                max_amount: pool_ref.max_amount,
+                enabled: pool_ref.enabled
+            };
+            vector::push_back(&mut pools, tpv);
+        };
+        pools
     }
 
     #[test_only]
