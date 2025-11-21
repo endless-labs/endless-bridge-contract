@@ -426,17 +426,21 @@ contract FundManager is Comn {
             createNewPool(token, tp);
         }
 
-        uint256 maxNeededPools = 1 + (amount / maxAmount);
-        selectedPools = new Types.TPool[](maxNeededPools);
-        amounts = new uint256[](maxNeededPools);
+        // calculate the maximum number of pools needed for the amount
+        uint256 maxNeededPools = 2 + (amount / maxAmount);
+        Types.TPool[] memory _selectedPools = new Types.TPool[](maxNeededPools);
+        uint256[] memory _amounts = new uint256[](maxNeededPools);
 
         uint256 remaining = amount;
         uint256 idx = tp.next_idx;
         uint256 count = 0;
+
         while (remaining > 0) {
+            require(count < maxNeededPools, "Amount requires too many pools");
+
             if (idx >= tp.pools.length) {
                 createNewPool(token, tp);
-                continue;
+                // new pool is at the end of the array, the loop will handle it in this iteration
             }
 
             Types.TPool storage pool = tp.pools[idx];
@@ -458,16 +462,22 @@ contract FundManager is Comn {
             }
 
             uint256 assignAmount = remaining > capacity ? capacity : remaining;
-            selectedPools[count] = pool;
-            amounts[count] = assignAmount;
+            _selectedPools[count] = pool;
+            _amounts[count] = assignAmount;
 
             remaining -= assignAmount;
-            if (remaining > 0) {
-                count++;
-                idx++;
-            }
+            count++;
+            idx++; // always move to the next pool for the next iteration
         }
         tp.next_idx = idx;
+
+        // Copy results to a correctly-sized array to return
+        selectedPools = new Types.TPool[](count);
+        amounts = new uint256[](count);
+        for (uint256 i = 0; i < count; i++) {
+            selectedPools[i] = _selectedPools[i];
+            amounts[i] = _amounts[i];
+        }
     }
 
     /// @dev Create a new pool wallet for a token

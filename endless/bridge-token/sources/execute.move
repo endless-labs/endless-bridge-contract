@@ -117,6 +117,14 @@ module bridge_token::execute {
         extra_data: vector<u8>
     }
 
+    #[event]
+    /// Event emitted when cross token limits updated
+    struct CrossTokenLimitsUpdated has drop, store {
+        token: address,
+        min_amount: u128,
+        max_amount: u128
+    }
+
     fun init_module(account: &signer) {
         let (_resource_signer, signer_cap) =
             account::create_resource_account(account, b"execute");
@@ -149,7 +157,11 @@ module bridge_token::execute {
                     max_bridge_amount: new_max
                 };
                 simple_map::add(bridge_mapping, token, bridge_config);
-            }
+            };
+
+            event::emit(
+                CrossTokenLimitsUpdated { token, min_amount: new_min, max_amount: new_max }
+            );
         } else {
             move_to(
                 &execute_signer,
@@ -164,6 +176,10 @@ module bridge_token::execute {
                 max_bridge_amount: new_max
             };
             simple_map::add(bridge_mapping, token, bridge_config);
+
+            event::emit(
+                CrossTokenLimitsUpdated { token, min_amount: new_min, max_amount: new_max }
+            );
         }
     }
 
@@ -250,8 +266,8 @@ module bridge_token::execute {
         };
 
         let msg_body = MsgBody {
-            source_token: source_token,
-            all_amount: all_amount,
+            source_token,
+            all_amount,
             from_who: signer::address_of(sender),
             to_who: from_bcs::to_address(to_who)
         };
@@ -270,7 +286,7 @@ module bridge_token::execute {
             from_who: body_v1.from_who,
             to_who: body_v1.to_who,
             status: 0, //unused
-            extra_data: extra_data
+            extra_data
         };
         let payload = to_bytes(&body_v3);
 
@@ -408,20 +424,18 @@ module bridge_token::execute {
             event::emit(PaymentInfo { lp_fee: 0, final_amount: all_amount });
         } else if (islp(mint_type)) {
             let lp_fee = get_lp_fee(from_bcs::to_address(to_token), all_amount);
-            let (transfer_amount, refund_amount) =
-                if (lp_fee > 0) {
-                    let pool_fee = refresh_rewards(
-                        from_bcs::to_address(to_token), lp_fee
-                    );
-                    (all_amount - lp_fee, lp_fee - pool_fee)
-                } else {
-                    (all_amount, 0)
-                };
+            let transfer_amount = all_amount - lp_fee;
+            // Refresh rewards distribution before transferring funds
+            if (lp_fee > 0) {
+                let _pool_fee = refresh_rewards(
+                    from_bcs::to_address(to_token), lp_fee
+                );
+            };
             transfer_from_pool(
                 body.to_who,
                 from_bcs::to_address(to_token),
                 transfer_amount,
-                refund_amount,
+                0, // refund_amount should be 0, not lp_fee
                 false
             );
             event::emit(PaymentInfo { lp_fee, final_amount: transfer_amount });
@@ -470,7 +484,7 @@ module bridge_token::execute {
                 to_who: body.to_who,
                 to_token: from_bcs::to_address(to_token),
                 to_amount: all_amount,
-                extra_data: extra_data
+                extra_data
             }
         );
     }
@@ -483,10 +497,10 @@ module bridge_token::execute {
         let to_who = from_bcs::to_address(vector::slice(&body, 80, 112));
 
         MsgBody {
-            source_token: source_token,
-            all_amount: all_amount,
-            from_who: from_who,
-            to_who: to_who
+            source_token,
+            all_amount,
+            from_who,
+            to_who
         }
     }
 
@@ -593,3 +607,4 @@ module bridge_token::execute {
         print(&from_bcs::to_address(to_token));
     }
 }
+

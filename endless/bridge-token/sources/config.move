@@ -3,6 +3,7 @@ module bridge_token::config {
     use std::signer;
     use std::vector;
     use endless_std::simple_map::{Self, SimpleMap};
+    use endless_framework::event;
     use bridge_core::message::{chain_from_bytes, Chain};
 
     /// The config account has no other management tokens beside admin.
@@ -38,6 +39,45 @@ module bridge_token::config {
         admin: address
     }
 
+    #[event]
+    /// Event emitted when authority changed
+    struct AuthorityChanged has drop, store {
+        old_addr: address,
+        new_addr: address,
+        role: u8 // 2=admin
+    }
+
+    #[event]
+    /// Event emitted when token relationship set
+    struct TokenRelationshipSet has drop, store {
+        source_chain: Chain,
+        source_token: vector<u8>,
+        source_token_decimals: u8,
+        dest_token: vector<u8>,
+        dest_token_type: u8
+    }
+
+    #[event]
+    /// Event emitted when token relationship removed
+    struct TokenRelationshipRemoved has drop, store {
+        source_chain: Chain,
+        source_token: vector<u8>
+    }
+
+    #[event]
+    /// Event emitted when chain contract updated
+    struct ChainContractUpdated has drop, store {
+        source_chain: Chain,
+        contract_addr: vector<u8>
+    }
+
+    #[event]
+    /// Event emitted when chain fee token updated
+    struct ChainFeeTokenUpdated has drop, store {
+        source_chain: Chain,
+        fee_token_addr: vector<u8>
+    }
+
     fun init_module(account: &signer) {
         move_to(
             account,
@@ -56,7 +96,14 @@ module bridge_token::config {
         let owner_conf = borrow_global_mut<OwnerConf>(@bridge_token);
         verify_admin(admin, owner_conf);
 
+        let old_admin = owner_conf.admin;
         owner_conf.admin = new_admin;
+
+        event::emit(AuthorityChanged {
+            old_addr: old_admin,
+            new_addr: new_admin,
+            role: 2 // admin role
+        });
     }
 
     /// Set the token mapping
@@ -80,6 +127,14 @@ module bridge_token::config {
                 from_source,
                 TokenAccuracy { from_decimals, to_token, to_decimals }
             );
+
+            event::emit(TokenRelationshipSet {
+                source_chain: from_chain,
+                source_token: from_token,
+                source_token_decimals: from_decimals,
+                dest_token: to_token,
+                dest_token_type: 1 // default mint type
+            });
         }
     }
 
@@ -97,6 +152,11 @@ module bridge_token::config {
         let token_mapping = &mut borrow_global_mut<Config>(@bridge_token).token_mapping;
         if (simple_map::contains_key(token_mapping, &from_source)) {
             simple_map::remove(token_mapping, &from_source);
+
+            event::emit(TokenRelationshipRemoved {
+                source_chain: from_chain,
+                source_token: from_token
+            });
         }
     }
 
@@ -122,7 +182,12 @@ module bridge_token::config {
             *contract = new_contract
         } else {
             simple_map::add(from_chain_contract, from_chain, new_contract);
-        }
+        };
+
+        event::emit(ChainContractUpdated {
+            source_chain: from_chain,
+            contract_addr: new_contract
+        });
     }
 
     /// set the chain fee token
@@ -140,7 +205,12 @@ module bridge_token::config {
             *fee_token = new_fee_token
         } else {
             simple_map::add(from_chain_fee_token, from_chain, new_fee_token);
-        }
+        };
+
+        event::emit(ChainFeeTokenUpdated {
+            source_chain: from_chain,
+            fee_token_addr: new_fee_token
+        });
     }
 
     inline fun verify_admin(admin: &signer, owner_conf: &OwnerConf) {

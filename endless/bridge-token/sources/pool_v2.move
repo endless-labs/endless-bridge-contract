@@ -1,16 +1,18 @@
 module bridge_token::pool_v2 {
     use endless_framework::account::{Self};
+    use endless_framework::event;
     use endless_framework::timestamp;
     use endless_framework::endless_coin::{get_eds_token_address};
     use endless_std::simple_map::{Self, SimpleMap};
     use endless_std::table::{Self};
-    use std::fixed_point64::{
+    use endless_std::fixed_point64::{
         create_from_rational,
         create_from_u128,
         multiply_u128,
         get_raw_value,
         FixedPoint64
     };
+    use endless_std::math128;
     use std::error;
     use std::signer;
     use std::vector;
@@ -54,6 +56,7 @@ module bridge_token::pool_v2 {
     const EWITHDRAW_FEE_TYPE: u64 = 14;
     /// No longer supported.
     const ENO_LONGER_SUPPORTED: u64 = 15;
+    const ESTAKED_DECREASE_TOO_LARGE: u64 = 16;
 
     const FEE_TYPE_PLATFORM: u8 = 1;
     const FEE_TYPE_COLLECT: u8 = 2;
@@ -108,6 +111,68 @@ module bridge_token::pool_v2 {
         withdrawal: u128
     }
 
+    #[event]
+    /// Event emitted when pool created
+    struct PoolCreated has drop, store {
+        pool: address
+    }
+
+    #[event]
+    /// Event emitted when token staked
+    struct TokenStaked has drop, store {
+        user: address,
+        token: address,
+        amount: u128,
+        timestamp: u64
+    }
+
+    #[event]
+    /// Event emitted when token withdrawn
+    struct TokenWithdrawn has drop, store {
+        user: address,
+        token: address,
+        amount: u128
+    }
+
+    #[event]
+    /// Event emitted when bonus withdrawn
+    struct BonusWithdrawn has drop, store {
+        user: address,
+        token: address,
+        amount: u128
+    }
+
+    #[event]
+    struct PoolRewardUpdated has drop, store {
+        token: address,
+        pool_fee: u128,
+        acc: u128,
+        apy: u128
+    }
+
+    #[event]
+    /// Event emitted when fee withdrawn
+    struct FeeWithdrawn has drop, store {
+        receiver: address,
+        amount: u128
+    }
+
+    #[event]
+    /// Event emitted when token stake amount updated
+    struct TokenStakeAmountUpdated has drop, store {
+        token: address,
+        min_amount: u128,
+        max_amount: u128
+    }
+
+    #[event]
+    /// Event emitted when pool marked deprecated
+    struct PoolMarkedDeprecated has drop, store {
+        token: address,
+        wallet: address,
+        available: u128
+    }
+
     struct OrderStore has key {
         // to_chain_id => nonce => status
         order_status: simple_map::SimpleMap<u128, table::Table<u64, u8>>
@@ -119,7 +184,7 @@ module bridge_token::pool_v2 {
         move_to(
             account,
             TokenPools {
-                signer_cap: signer_cap,
+                signer_cap,
                 financer: @bridge_token,
                 total_platform_fee: 0,
                 total_collect_fee: 0,
@@ -171,7 +236,11 @@ module bridge_token::pool_v2 {
                 min_stake_time: 24 * 60 * 60 // 1 day
             };
             simple_map::add(staking_mapping, token, staking_config);
-        }
+        };
+
+        event::emit(
+            TokenStakeAmountUpdated { token, min_amount: new_min, max_amount: new_max }
+        );
     }
 
     public entry fun set_stake_min_time(
@@ -220,6 +289,8 @@ module bridge_token::pool_v2 {
                 last_receive_rewards_time: timestamp::now_seconds()
             }
         );
+
+        event::emit(PoolCreated { pool: token });
     }
 
     /// Add liquidity to token pool
@@ -273,7 +344,7 @@ module bridge_token::pool_v2 {
             lp.last_deposit_time = timestamp::now_seconds();
         } else {
             let lp = LP {
-                amount: amount,
+                amount,
                 earns: 0,
                 debt: multiply_u128(amount, pool.acc_ratio),
                 remaining: 0,
@@ -293,6 +364,15 @@ module bridge_token::pool_v2 {
 
         // Transfer the token from the owner to the pool
         deposit_manage_pool(owner, token, amount);
+
+        event::emit(
+            TokenStaked {
+                user: signer::address_of(owner),
+                token,
+                amount,
+                timestamp: timestamp::now_seconds()
+            }
+        );
     }
 
     /// Remove liquidity to token pool
@@ -332,20 +412,28 @@ module bridge_token::pool_v2 {
         );
 
         let old_amount = lp.amount;
-        lp.amount = lp.amount - amount;
-        lp.debt =
-            lp.debt
-                - multiply_u128(lp.debt, create_from_rational(lp.amount, old_amount));
-        lp.remaining =
-            lp.remaining
-                + multiply_u128(
-                    (multiply_u128(old_amount, pool.acc_ratio) - lp.debt),
-                    create_from_rational(amount, old_amount)
-                );
+        
+        let pending_before = multiply_u128(old_amount, pool.acc_ratio) - lp.debt;
+        lp.remaining = lp.remaining + pending_before;
 
-        let staked_decrease = amount * old_amount / pool.total_staked_liquidity;
+        lp.amount = old_amount - amount;
+        lp.debt = multiply_u128(lp.amount, pool.acc_ratio);
+
+        let precision = 1000000000000u128;
+        let remove_ratio = math128::mul_div(amount, precision, pool.total_liquidity);
+        let staked_decrease = math128::mul_div(pool.total_staked, remove_ratio, precision);
+        let staked_decrease_with_ceiling = if (staked_decrease * precision < pool.total_staked * remove_ratio) {
+            staked_decrease + 1
+        } else {
+            staked_decrease
+        };
+        assert!(
+            staked_decrease_with_ceiling <= pool.total_staked,
+            error::invalid_argument(ESTAKED_DECREASE_TOO_LARGE)
+        );
+
         let total_staked = &mut pool.total_staked;
-        *total_staked = *total_staked - staked_decrease;
+        *total_staked = *total_staked - staked_decrease_with_ceiling;
 
         let total_liquidity = &mut pool.total_liquidity;
         *total_liquidity = *total_liquidity - amount;
@@ -355,6 +443,8 @@ module bridge_token::pool_v2 {
 
         // Transfer the token from the pool to the owner
         payout_to_user(signer::address_of(owner), token, amount);
+
+        event::emit(TokenWithdrawn { user: signer::address_of(owner), token, amount });
     }
 
     /// Transfer token to pool
@@ -410,7 +500,12 @@ module bridge_token::pool_v2 {
 
         // Only transferring funds to reduce liquidity. Otherwise, it will be calculated based on the share
         if (!is_fee) {
-            let staked_decrease = amount * pool.total_staked / pool.total_liquidity;
+            let staked_decrease =
+                math128::mul_div(amount, pool.total_staked, pool.total_liquidity);
+            assert!(
+                staked_decrease <= pool.total_staked,
+                error::invalid_argument(ESTAKED_DECREASE_TOO_LARGE)
+            );
             let total_staked = &mut pool.total_staked;
             *total_staked = *total_staked - staked_decrease;
         };
@@ -462,11 +557,11 @@ module bridge_token::pool_v2 {
         };
 
         // Calculate the pool fee
-        let pool_fee = lp_fee * pool.total_staked / pool.total_liquidity;
+        let pool_fee = math128::mul_div(lp_fee, pool.total_staked, pool.total_liquidity);
         pool.total_earns = pool.total_earns + pool_fee;
 
-        let acc_ratio = create_from_rational(pool_fee, pool.total_liquidity);
-        let result = std::fixed_point64::add(pool.acc_ratio, acc_ratio);
+        let acc_ratio = create_from_rational(pool_fee, pool.total_staked_liquidity);
+        let result = endless_std::fixed_point64::add(pool.acc_ratio, acc_ratio);
         pool.acc_ratio = result;
 
         // Calculate the APY
@@ -477,11 +572,24 @@ module bridge_token::pool_v2 {
                 now_seconds - pool.last_receive_rewards_time
             };
 
-        pool.last_apy = std::fixed_point64::create_from_rational(
-            (std::fixed_point64::multiply_u128(((365 * 24 * 60 * 60) as u128), acc_ratio)),
+        pool.last_apy = endless_std::fixed_point64::create_from_rational(
+            (
+                endless_std::fixed_point64::multiply_u128(
+                    ((365 * 24 * 60 * 60) as u128), acc_ratio
+                )
+            ),
             (delta as u128)
         );
         pool.last_receive_rewards_time = now_seconds;
+
+        event::emit(
+            PoolRewardUpdated {
+                token,
+                pool_fee,
+                acc: get_raw_value(pool.acc_ratio),
+                apy: get_raw_value(pool.last_apy)
+            }
+        );
 
         return pool_fee
     }
@@ -630,8 +738,8 @@ module bridge_token::pool_v2 {
                 error::not_found(EOWNER_NOT_FOUND)
             );
             let lp = simple_map::borrow_mut(liquidity_providers, &owner);
-            let reword = multiply_u128(lp.amount, pool.acc_ratio) - lp.debt
-                + lp.remaining;
+            let reword = multiply_u128(lp.amount, pool.acc_ratio) + lp.remaining
+                - lp.debt;
             assert!(reword >= amount, EAMOUNT_EXCEEDS_REWORD);
 
             // update the liquidity
@@ -644,6 +752,8 @@ module bridge_token::pool_v2 {
             lp.remaining = reword - amount;
 
             payout_to_user(owner, token, amount);
+
+            event::emit(BonusWithdrawn { user: owner, token, amount });
         };
     }
 
@@ -668,6 +778,8 @@ module bridge_token::pool_v2 {
         let total_liquidity = &mut pool.total_liquidity;
         *total_liquidity = *total_liquidity - amount;
         payout_to_user(signer::address_of(sender), eds_token_address, amount);
+
+        event::emit(FeeWithdrawn { receiver: signer::address_of(sender), amount });
     }
 
     public entry fun withdraw_deprecated_pool(
@@ -792,7 +904,7 @@ module bridge_token::pool_v2 {
                 amount: pool.total_staked,
                 last_apy: get_raw_value(pool.last_apy),
                 earns: pool.total_earns,
-                usage_rate: usage_rate,
+                usage_rate,
                 withdrawal: 0
             };
             vector::push_back(&mut liquiditys, ol);
@@ -861,7 +973,7 @@ module bridge_token::pool_v2 {
                     last_apy: 0,
                     earns: lp.earns,
                     usage_rate: 0,
-                    withdrawal: withdrawal
+                    withdrawal
                 };
                 vector::push_back(&mut liquiditys, ol);
             };

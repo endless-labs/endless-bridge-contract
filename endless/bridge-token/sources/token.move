@@ -26,11 +26,25 @@ module bridge_token::token {
         mint_ref: MintRef,
         burn_ref: BurnRef
     }
-
+    
     #[event]
     /// Event emitted when create new token
     struct CreatToken has drop, store {
         token: address
+    }
+
+    #[event]
+    /// Event emitted when token minted
+    struct TokenMinted has drop, store {
+        account: address,
+        amount: u128
+    }
+
+    #[event]
+    /// Event emitted when token burned
+    struct TokenBurned has drop, store {
+        account: address,
+        amount: u128
     }
 
     public entry fun create(
@@ -76,6 +90,10 @@ module bridge_token::token {
             to, asset_obj
         );
         fungible_asset::mint_to(mint_ref, to_wallet, amount);
+        event::emit(TokenMinted {
+            account: to,
+            amount
+        });
     }
 
     /// Burn fungible assets as the owner of metadata object from fungible stores.
@@ -86,6 +104,10 @@ module bridge_token::token {
             @bridge_token, asset_obj
         );
         fungible_asset::burn_from(burn_ref, from_wallet, amount);
+        event::emit(TokenBurned {
+            account: @bridge_token,
+            amount
+        });
     }
 
     /// Transfer as the owner of metadata object.

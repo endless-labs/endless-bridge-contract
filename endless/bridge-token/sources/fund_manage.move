@@ -96,6 +96,55 @@ module bridge_token::fund_manage {
         wallet: address
     }
 
+    #[event]
+    struct FundsCollected has drop, store {
+        wallet: address,
+        token: address,
+        amount: u128
+    }
+
+    #[event]
+    struct TokenPoolAdded has drop, store {
+        token: address,
+        pool_addr: address,
+        max_amount: u128
+    }
+
+    #[event]
+    struct FundsRefunded has drop, store {
+        wallet: address,
+        user: address
+    }
+
+    #[event]
+    struct PayoutCompleted has drop, store {
+        token: address,
+        user: address,
+        amount: u128
+    }
+
+    #[event]
+    struct DeprecatedPoolWithdrawal has drop, store {
+        token: address,
+        wallet: address,
+        financer: address,
+        amount: u128
+    }
+
+    #[event]
+    struct DeprecatedWalletWithdrawal has drop, store {
+        wallet: address,
+        user: address,
+        eth_amount: u128,
+        token_amount: u128
+    }
+
+    #[event]
+    struct TokenMaxAmountUpdated has drop, store {
+        token: address,
+        max_amount: u128
+    }
+
     /// Initialize FundManager under deployer's address
     fun init_module(account: &signer) {
         let (_resource_signer, signer_cap) =
@@ -105,7 +154,7 @@ module bridge_token::fund_manage {
             account,
             FundManager {
                 next_id: 0,
-                signer_cap: signer_cap,
+                signer_cap,
                 collect_sender: none<vector<u8>>(),
                 collect_sender_address: none<address>(),
                 collect_fee: 500000,
@@ -151,7 +200,9 @@ module bridge_token::fund_manage {
             *current_max_amount = max_amount
         } else {
             simple_map::add(&mut manager_resource.token_max_amount, token, max_amount);
-        }
+        };
+
+        event::emit(TokenMaxAmountUpdated { token, max_amount });
     }
 
     public(friend) fun verify_collect_sender(
@@ -168,7 +219,6 @@ module bridge_token::fund_manage {
                 error::invalid_argument(EINVALID_LENGTH)
             );
             let signature = vector::slice(&signature_bytes, 0, 64);
-            std::debug::print(&signature);
             let recovery_byte = *vector::borrow(&signature_bytes, 64);
             let recovery_id =
                 if (recovery_byte == 27) { 0 }
@@ -298,6 +348,8 @@ module bridge_token::fund_manage {
         };
 
         assert!(remaining == 0, 1001); // Insufficient pool balance
+
+        event::emit(PayoutCompleted { token, user, amount });
     }
 
     // fefund token to user
@@ -341,6 +393,8 @@ module bridge_token::fund_manage {
         vector::push_back(&mut manager_resource.unused_wallets, wallet_addr);
         let idx = vector::length(&manager_resource.unused_wallets);
         table::add(&mut manager_resource.unused_wallets_index, wallet_addr, idx);
+
+        event::emit(FundsRefunded { wallet: wallet_addr, user });
     }
 
     /// Collect funds from wallet into pools
@@ -437,11 +491,11 @@ module bridge_token::fund_manage {
 
         let pool_signer = account::create_signer_with_capability(&pool_ref.signer_cap);
         let pool_addr = signer::address_of(&pool_signer);
-        transfer(
-            &pool_signer,
-            token,
-            user,
-            balance(pool_addr, token)
+        let amount = balance(pool_addr, token);
+        transfer(&pool_signer, token, user, amount);
+
+        event::emit(
+            DeprecatedPoolWithdrawal { token, wallet: pool_addr, financer: user, amount }
         );
     }
 
@@ -525,6 +579,8 @@ module bridge_token::fund_manage {
         vector::push_back(&mut manager_resource.unused_wallets, wallet_addr);
         let idx = vector::length(&manager_resource.unused_wallets);
         table::add(&mut manager_resource.unused_wallets_index, wallet_addr, idx);
+        event::emit(FundsCollected { wallet: wallet_addr, token, amount: token_amount });
+
         (token, token_amount, eds_amount)
     }
 
@@ -647,11 +703,14 @@ module bridge_token::fund_manage {
         let (wallet_signer, wallet_cap) =
             account::create_resource_account(manager_signer, seed);
         let wallet_addr = signer::address_of(&wallet_signer);
+
+        event::emit(TokenPoolAdded { token, pool_addr: wallet_addr, max_amount });
+        
         TPool {
             signer_cap: wallet_cap,
             addr: wallet_addr,
-            token: token,
-            max_amount: max_amount,
+            token,
+            max_amount,
             enabled: true
         }
     }

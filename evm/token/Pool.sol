@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-import {ECDSA} from "@openzeppelin/contracts@5.0.0/utils/cryptography/ECDSA.sol";
+import {
+    ECDSA
+} from "@openzeppelin/contracts@5.0.0/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts@5.0.0/utils/structs/EnumerableSet.sol";
 import "@openzeppelin/contracts@5.0.0/utils/Address.sol";
 import "@openzeppelin/contracts@5.0.0/utils/math/Math.sol";
@@ -77,7 +79,12 @@ contract Pool is Comn {
         uint256 amount
     );
     event FeeWithdrawn(address indexed receiver, uint256 amount);
-
+    event PoolRewardUpdated(
+        address indexed token,
+        uint256 poolFee,
+        uint256 acc,
+        uint256 apy
+    );
     event TokenStakeAmountUpdated(
         address indexed token,
         uint256 minAmount,
@@ -193,6 +200,7 @@ contract Pool is Comn {
      * @dev Allows a user to stake tokens into a pool.
      * @param stakeToken The address of the token to be staked.
      * @param amount The amount of tokens to be staked.
+     * @param timestamp The timestamp of the message from the user.
      * @param signature The signature of the message from the user.
      */
     function stakeIntoPool(
@@ -346,52 +354,62 @@ contract Pool is Comn {
         IFundManager manager = IFundManager(ManagerAddr);
         manager.payoutToUser(destToken, toWho, amount);
 
-        // Calculate the pool fee.
-        uint pool_fee = Math.mulDiv(
-            lp_fee,
-            poolMap[destToken].amount,
-            poolMap[destToken].inAmount
-        );
-
-        // Calculate the decrease in the staked amount.
-        uint stakedDecrease = (allAmount * poolMap[destToken].amount) /
-            poolMap[destToken].inAmount;
-        require(
-            stakedDecrease <= poolMap[destToken].amount,
-            "pool amount insufficient for transfer"
-        );
-        // Decrease the staked amount in the pool.
-        poolMap[destToken].amount -= stakedDecrease;
-        // Decrease the total amount in the pool.
-        poolMap[destToken].inAmount -= allAmount;
-        // Return the remaining pool fee
-        poolMap[destToken].inAmount += (lp_fee - pool_fee);
-
         // Get a reference to the pool information.
         Types.PoolInfo storage poolInfo = poolMap[destToken];
+        require(poolInfo.inAmount > 0, "Pool is empty");
+
+        // Calculate the pool fee.
+        uint pool_fee = Math.mulDiv(lp_fee, poolInfo.amount, poolInfo.inAmount);
+
+        // Calculate the decrease in the staked amount.
+        uint stakedDecrease = Math.mulDiv(
+            allAmount,
+            poolInfo.amount,
+            poolInfo.inAmount
+        );
+        require(
+            stakedDecrease <= poolInfo.amount,
+            "pool amount insufficient for transfer"
+        );
+
+        // Decrease the staked amount in the pool.
+        poolInfo.amount -= stakedDecrease;
+        poolInfo.inAmount -= allAmount;
+        poolInfo.inAmount += lp_fee;
+
         // If there is a staked amount in the pool, update the reward amount and APY.
         if (poolInfo.stakeAmount > 0) {
             poolInfo.rewardAmount += pool_fee;
-            if (pool_fee > 0 && poolInfo.stakeAmount > 0) {
-                uint acc_percentage = (pool_fee * (1 << 64)) /
-                    poolInfo.stakeAmount;
-                emit Types.Log("acc_percentage", acc_percentage);
+            if (pool_fee > 0) {
+                uint acc_percentage = Math.mulDiv(
+                    pool_fee,
+                    (1 << 64),
+                    poolInfo.stakeAmount
+                );
                 poolInfo.acc += acc_percentage;
+
                 // cal the apy
+                uint now_secs = ComFunUtil.currentTimestamp();
                 if (poolInfo.last_receive_rewards_time == 0) {
                     poolInfo.last_apy = acc_percentage;
-                    poolInfo.last_receive_rewards_time = ComFunUtil
-                        .currentTimestamp();
+                    poolInfo.last_receive_rewards_time = now_secs;
                 } else {
-                    uint now_secs = ComFunUtil.currentTimestamp();
                     uint delta = now_secs - poolInfo.last_receive_rewards_time;
                     if (delta > 0) {
-                        poolInfo.last_apy =
-                            (acc_percentage * 365 * 24 * 60 * 60) /
-                            delta;
+                        poolInfo.last_apy = Math.mulDiv(
+                            acc_percentage,
+                            365 * 24 * 60 * 60,
+                            delta
+                        );
                         poolInfo.last_receive_rewards_time = now_secs;
                     }
                 }
+                emit PoolRewardUpdated(
+                    destToken,
+                    pool_fee,
+                    poolInfo.acc,
+                    poolInfo.last_apy
+                );
             }
         }
     }
@@ -493,7 +511,10 @@ contract Pool is Comn {
             Types.UserAmountInfo memory userStakeInfo = userStakeAmountMap[
                 user
             ][stakeToken];
-            uint total_earns = userStakeInfo.debt - userStakeInfo.remainReward;
+            uint total_earns = 0;
+            if (userStakeInfo.debt > userStakeInfo.remainReward) {
+                total_earns = userStakeInfo.debt - userStakeInfo.remainReward;
+            }
             // Populate the array with the user staked amount information for view.
             uai[i] = Types.UserAmountInfoForView({
                 token: userStakeInfo.token,
@@ -608,19 +629,44 @@ contract Pool is Comn {
         address user = msg.sender;
         uint userAllAmount = userStakeAmountMap[user][token].amount;
         require(amount <= userAllAmount, "not enough user assets");
-        userStakeAmountMap[user][token].amount -= amount;
+
+        uint accAmount = (userAllAmount * poolMap[token].acc) >> 64;
+        uint pendingBefore = 0;
+        if (accAmount > userStakeAmountMap[user][token].debt) {
+            pendingBefore = accAmount - userStakeAmountMap[user][token].debt;
+        }
+        // When withdrawing partial stake, preserve ALL pending rewards in remainReward
+        // This ensures that withdrawing liquidity doesn't claim rewards, only settles debt
+        if (pendingBefore > 0) {
+            userStakeAmountMap[user][token].remainReward += pendingBefore;
+        }
+
+        userStakeAmountMap[user][token].amount = userAllAmount - amount;
+        uint newUserAmount = userStakeAmountMap[user][token].amount;
+        userStakeAmountMap[user][token].debt =
+            (newUserAmount * poolMap[token].acc) >>
+            64;
 
         require(amount <= poolMap[token].inAmount, "not enough pool assets");
         require(
             amount <= poolMap[token].stakeAmount,
             "not enough pool stakeAmount assets"
         );
-        
-        uint userStakeRatio = (userAllAmount * 1e18) /
-            poolMap[token].stakeAmount;
-        uint withdrawRatio = (amount * 1e18) / userAllAmount;
-        uint stakedDecrease = (poolMap[token].amount * userStakeRatio) / 1e18;
-        stakedDecrease = (stakedDecrease * withdrawRatio) / 1e18;
+
+        uint precision = 1000000000000;
+        uint removeRatio = Math.mulDiv(
+            amount,
+            precision,
+            poolMap[token].inAmount
+        );
+        uint stakedDecrease = Math.mulDiv(
+            poolMap[token].amount,
+            removeRatio,
+            precision
+        );
+        if (stakedDecrease * precision < poolMap[token].amount * removeRatio) {
+            stakedDecrease = stakedDecrease + 1;
+        }
         require(
             stakedDecrease <= poolMap[token].amount,
             "pool amount insufficient for withdrawal"
@@ -629,19 +675,6 @@ contract Pool is Comn {
         poolMap[token].amount -= stakedDecrease;
         poolMap[token].inAmount -= amount;
         poolMap[token].stakeAmount -= amount;
-
-        // Calculate the new reward based on the withdrawn amount and the current accumulated value.
-        uint newReward = (amount * poolMap[token].acc) >> 64;
-        uint partDebt = (userStakeAmountMap[user][token].debt * amount) /
-            userAllAmount;
-        if (newReward > partDebt) {
-            userStakeAmountMap[user][token].remainReward +=
-                newReward -
-                partDebt;
-        }
-
-        // Decrease the user's debt.
-        userStakeAmountMap[user][token].debt -= partDebt;
     }
 
     /**
@@ -665,19 +698,19 @@ contract Pool is Comn {
      */
     function _resetBonus(address token, uint amount_) private {
         address user = msg.sender;
-        uint amount = userStakeAmountMap[user][token].amount;
-        uint newDebt = (amount * poolMap[token].acc) >> 64;
+        uint userAmount = userStakeAmountMap[user][token].amount;
+        uint accAmount = (userAmount * poolMap[token].acc) >> 64;
 
-        // Calculate the total reward the user has earned.
-        uint totalReward = newDebt -
-            userStakeAmountMap[user][token].debt +
+        uint pendingBefore = 0;
+        if (accAmount > userStakeAmountMap[user][token].debt) {
+            pendingBefore = accAmount - userStakeAmountMap[user][token].debt;
+        }
+
+        uint totalReward = pendingBefore +
             userStakeAmountMap[user][token].remainReward;
-        // Check if the user has enough reward.
         require(totalReward >= amount_, "not enough reward");
-        uint newReward = totalReward - amount_;
 
-        // Update the user's remaining reward and debt.
-        userStakeAmountMap[user][token].remainReward = newReward;
-        userStakeAmountMap[user][token].debt = newDebt;
+        userStakeAmountMap[user][token].remainReward = totalReward - amount_;
+        userStakeAmountMap[user][token].debt = accAmount;
     }
 }

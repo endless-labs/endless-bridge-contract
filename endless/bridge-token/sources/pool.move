@@ -2,7 +2,7 @@ module bridge_token::pool {
     use endless_framework::account::{Self};
     use endless_framework::timestamp;
     use endless_std::simple_map::{Self, SimpleMap};
-    use std::fixed_point64::{
+    use endless_std::fixed_point64::{
         create_from_rational,
         create_from_u128,
         multiply_u128,
